@@ -1,0 +1,52 @@
+"""설정 파일(.env) 읽기. 키와 웹후크 주소는 이 파일에만 두고, 코드 · 저장소 · 기록에는 넣지 않습니다."""
+import os
+import stat
+
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ENV_PATH = os.path.join(HERE, ".env")
+DATA_DIR = os.path.join(HERE, "data")
+WEBHOOK_PREFIXES = ("https://discord.com/api/webhooks/", "https://discordapp.com/api/webhooks/")
+
+
+class ConfigError(Exception):
+    pass
+
+
+def read_env(path=ENV_PATH):
+    if not os.path.exists(path):
+        raise ConfigError("설정 파일이 없어요: %s (.env.example 을 복사해 만들어 주세요)" % path)
+    if os.name == "posix":                     # 폰(Termux)에서는 나만 읽게 (rw-------)
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+        if mode & 0o077:
+            os.chmod(path, 0o600)
+    out = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            out[k.strip()] = v.strip().strip('"').strip("'")
+    return out
+
+
+def load(path=ENV_PATH):
+    e = read_env(path)
+    need = ["BINANCE_API_KEY", "BINANCE_API_SECRET", "DISCORD_WEBHOOK_TRADE"]
+    miss = [k for k in need if not e.get(k)]
+    if miss:
+        raise ConfigError("설정 파일에 빠진 값: " + ", ".join(miss))
+    hooks = {"trade": e["DISCORD_WEBHOOK_TRADE"]}
+    hooks["summary"] = e.get("DISCORD_WEBHOOK_SUMMARY") or hooks["trade"]
+    hooks["status"] = e.get("DISCORD_WEBHOOK_STATUS") or hooks["summary"]
+    for name, url in hooks.items():
+        if not url.startswith(WEBHOOK_PREFIXES):
+            raise ConfigError("%s 웹후크 주소가 디스코드 주소가 아니에요 (https://discord.com/api/webhooks/ 로 시작해야 함)" % name)
+    try:
+        hour = int(e.get("SUMMARY_HOUR", "22"))
+    except ValueError:
+        raise ConfigError("SUMMARY_HOUR 는 0 ~ 23 숫자여야 해요")
+    if not 0 <= hour <= 23:
+        raise ConfigError("SUMMARY_HOUR 는 0 ~ 23 숫자여야 해요")
+    os.makedirs(DATA_DIR, exist_ok=True)
+    return {"key": e["BINANCE_API_KEY"], "secret": e["BINANCE_API_SECRET"], "hooks": hooks, "summary_hour": hour}
