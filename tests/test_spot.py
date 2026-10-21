@@ -374,8 +374,8 @@ class PositionsWithSpotTest(unittest.TestCase):
         asyncio.run(app._post_positions())
         self.assertEqual(len(posted()), 1)
 
-    def test_checks_ignore_spot_only_changes(self):
-        """다시 켬 · 끊김 · 10분 점검은 선물 포지션이 바뀔 때만 (10/22 06:30 에 체결 없이 올라간 글) · 08:50 정시 글은 늘."""
+    def test_checks_post_only_real_changes(self):
+        """다시 켬 · 끊김 · 10분 점검: 지갑끼리 옮김 · Earn 이자 · 찌꺼기로는 안 올리고 입금 · 출금 · 놓친 체결은 올림 (10/22 06:30 일 뒤)."""
         from candleman.app import App
         from candleman.discord import Discord
         fb, fut = FakeBinance(), []
@@ -396,19 +396,23 @@ class PositionsWithSpotTest(unittest.TestCase):
             while not app.d.q.empty():
                 n += app.d.q.get_nowait()[0] == "positions"
             return n
-        asyncio.run(app._post_positions("check"))
-        self.assertEqual(count(), 1)                                               # 처음엔 올림 (지난 글이 없음)
+        def check(**change):
+            for k, v in change.items():
+                getattr(fb, k).update(v)
+            asyncio.run(app._post_positions("check"))
+            return count()
+        self.assertEqual(check(), 1)                                               # 처음엔 올림 (지난 글이 없음)
         fb.balances.pop("SOL")
-        fb.flexible = {"SOL": D("2")}                                              # 체결 없이 솔라나가 Earn 으로 옮겨짐
-        fb.balances["ETH"] = D("1")                                                # 에어드랍 등 체결 없이 늘어난 코인
-        asyncio.run(app._post_positions("check"))
-        self.assertEqual(count(), 0)
+        self.assertEqual(check(flexible={"SOL": D("2")}), 0)                       # 솔라나를 현물 지갑에서 Earn 으로 옮김
+        self.assertEqual(check(flexible={"SOL": D("2.0001")}), 0)                  # Earn 이자
+        self.assertEqual(check(balances={"ETH": D("0.004")}), 0)                   # $6 어치 에어드랍 · 찌꺼기
+        self.assertEqual(check(flexible={"SOL": D("2.07")}), 1)                    # 쌓인 이자가 1% · $10 를 넘음
+        self.assertEqual(check(balances={"BTC": D("0.08")}), 1)                    # 입금 (또는 놓친 매수)
+        fb.flexible.pop("SOL")
+        self.assertEqual(check(), 1)                                               # 출금 (또는 놓친 매도) — 값은 지금 시세로 셈
         fut.append({"symbol": "EWYUSDT", "positionAmt": "20", "entryPrice": "152.83", "markPrice": "155", "notional": "3100",
                     "unRealizedProfit": "12.5", "isolatedMargin": "0", "positionSide": "BOTH"})   # 놓친 선물 체결
-        asyncio.run(app._post_positions("check"))
-        self.assertEqual(count(), 1)
-        asyncio.run(app._post_positions("daily"))                                  # 정시 글은 바뀐 것이 없어도
-        self.assertEqual(count(), 1)
+        self.assertEqual(check(), 1)
         asyncio.run(app._post_positions("fill"))                                   # 체결 뒤인데 바뀐 것이 없으면 안 올림
         self.assertEqual(count(), 0)
 

@@ -327,34 +327,6 @@ class PositionsChannelTest(unittest.TestCase):
         asyncio.run(again._post_positions())
         self.assertEqual(self.posted(again), [])
 
-    def test_daily_post_at_0850_once(self):
-        """매일 08:50 — 바뀐 것이 없어도 한 번 (10/22 댕이). 못 올렸으면 1분 뒤 다시, 한 시간이 지나면 그날은 건너뜀."""
-        app = self.make()
-        asyncio.run(app._post_positions())
-        self.posted(app)                                                         # 거래 뒤에 올린 글 (지난 글)
-        for t in (ms(2026, 10, 22, 8, 49), ms(2026, 10, 22, 8, 50), ms(2026, 10, 22, 8, 55)):
-            app._pos_daily_next = 0
-            asyncio.run(app._maybe_daily_positions(t))
-        (text, _), = self.posted(app)                                            # 08:49 는 아직 · 08:55 는 이미 올림
-        self.assertTrue(text.startswith("📌 **운영자 포지션**"))
-        ok = app.b.positions
-
-        async def down():
-            raise ConnectionError("바이낸스에 연결하지 못함")
-        app.b.positions = down
-        asyncio.run(app._maybe_daily_positions(ms(2026, 10, 23, 8, 50)))
-        app.b.positions = ok
-        asyncio.run(app._maybe_daily_positions(ms(2026, 10, 23, 8, 50) + 30_000))   # 1분 안에는 다시 묻지 않음
-        self.assertEqual(self.posted(app), [])
-        asyncio.run(app._maybe_daily_positions(ms(2026, 10, 23, 8, 51) + 1000))
-        self.assertEqual(len(self.posted(app)), 1)
-        app._pos_daily_next = 0
-        asyncio.run(app._maybe_daily_positions(ms(2026, 10, 24, 9, 50)))         # 한 시간이 지남 (폰이 꺼져 있던 날)
-        self.assertEqual(self.posted(app), [])
-        app.cfg = {"positions_time": None}                                         # POSITIONS_TIME=off
-        asyncio.run(app._maybe_daily_positions(ms(2026, 10, 25, 8, 50)))
-        self.assertEqual(self.posted(app), [])
-
     def test_off_without_webhook_and_fill_schedules_check(self):
         app = self.make({"trade": "u1", "summary": "u2", "status": "u3"})
         asyncio.run(app._post_positions())
@@ -363,17 +335,6 @@ class PositionsChannelTest(unittest.TestCase):
         asyncio.run(app.emit([], [{"kind": "fill", "t": 1, "effect": "add", "symbol": "EWYUSDT"}]))
         self.assertIsNone(app._pos_cache)                                        # /포지션도 새 값으로
         self.assertIsNotNone(app._pos_due)                                       # 잠시 뒤 #현재포지션 확인
-
-
-class ClockConfigTest(unittest.TestCase):
-    def test_positions_time(self):
-        from candleman import config
-        self.assertEqual(config._clock({}, "POSITIONS_TIME", "08:50"), (8, 50))
-        self.assertEqual(config._clock({"POSITIONS_TIME": "21:05"}, "POSITIONS_TIME", "08:50"), (21, 5))
-        self.assertIsNone(config._clock({"POSITIONS_TIME": "off"}, "POSITIONS_TIME", "08:50"))
-        for bad in ("8", "25:00", "08:50:00", "아침"):
-            with self.assertRaises(config.ConfigError):
-                config._clock({"POSITIONS_TIME": bad}, "POSITIONS_TIME", "08:50")
 
 
 class ReturnTest(unittest.TestCase):

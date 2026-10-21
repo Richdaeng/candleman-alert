@@ -42,7 +42,7 @@ def load(path=ENV_PATH):
     hooks["status"] = e.get("DISCORD_WEBHOOK_STATUS") or hooks["summary"]
     if e.get("DISCORD_WEBHOOK_SYMBOLS"):               # 있으면 처음 진입한 종목을 #종목설명에 소개
         hooks["symbols"] = e["DISCORD_WEBHOOK_SYMBOLS"]
-    if e.get("DISCORD_WEBHOOK_POSITIONS"):             # 있으면 거래로 포지션이 바뀔 때 · 매일 08:50 에 #현재포지션에 지금 포지션 카드
+    if e.get("DISCORD_WEBHOOK_POSITIONS"):             # 있으면 포지션이 바뀔 때마다 #현재포지션에 지금 포지션 카드
         hooks["positions"] = e["DISCORD_WEBHOOK_POSITIONS"]
     if e.get("DISCORD_WEBHOOK_BRIEFING"):              # 있으면 매일 아침 #일일-경제-브리핑
         hooks["briefing"] = e["DISCORD_WEBHOOK_BRIEFING"]
@@ -58,7 +58,6 @@ def load(path=ENV_PATH):
             "spot": e.get("SPOT", "1").strip() != "0",                    # 현물 체결 알림 · 보유 (0 이면 끔)
             "briefing_hour": _hour(e, "BRIEFING_HOUR", "8"),              # 아침 경제 브리핑 시각
             "briefing_url": e.get("BRIEFING_URL") or None,               # 브리핑 글을 받는 곳 (기본: GitHub candleman-briefing)
-            "positions_time": _clock(e, "POSITIONS_TIME", "08:50"),       # 매일 #현재포지션 글 시각 (10/22 댕이 · off 면 끔)
             "start_usd": _money(e, "START_USD", "7800"),                  # 수익률 기준 시작 금액 (10/21 댕이: $7,800 으로 시작 · 0 이면 끔)
             "start_year": _year(e, "START_YEAR", "2026"),                 # 그 금액이 기준인 해. 다음 해부터는 1월 1일 0시의 전체 자산
             "update_hour": _hour(e, "UPDATE_HOUR", "5")}
@@ -82,20 +81,6 @@ def _money(e, key, default):
     except InvalidOperation:
         raise ConfigError("%s 는 달러 금액이어야 해요 (예: %s=7800)" % (key, key)) from None
     return v if v > 0 else None
-
-
-def _clock(e, key, default):
-    """'08:50' → (8, 50). 0 · off 면 None — 그 기능을 끔."""
-    raw = (e.get(key) or default).strip()
-    if raw.lower() in ("0", "off"):
-        return None
-    try:
-        h, m = (int(x) for x in raw.split(":"))
-    except ValueError:
-        raise ConfigError("%s 는 '08:50' 같은 시각이어야 해요 (끄려면 off)" % key) from None
-    if not (0 <= h <= 23 and 0 <= m <= 59):
-        raise ConfigError("%s 는 '08:50' 같은 시각이어야 해요 (끄려면 off)" % key)
-    return h, m
 
 
 def _hour(e, key, default):
