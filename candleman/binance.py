@@ -93,6 +93,13 @@ class Binance:
             rows = await self.call("GET", "/fapi/v2/positionRisk", signed=True)
         return [r for r in rows if float(r.get("positionAmt") or 0) != 0]
 
+    async def account(self):
+        """선물 계좌 요약 — totalMarginBalance(증거금 합계 = 지갑 잔고 + 미실현 손익) 등."""
+        try:
+            return await self.call("GET", "/fapi/v3/account", signed=True)
+        except BinanceError:
+            return await self.call("GET", "/fapi/v2/account", signed=True)
+
     async def open_orders(self):
         return await self.call("GET", "/fapi/v1/openOrders", signed=True)
 

@@ -210,17 +210,19 @@ class App:
         gaps = [(a, b) for a, b in self.state.get("gaps", []) if b > start and a < end]
         await self.d.put("summary", summary.build_text(start, end, fills, realized, fees, funding, positions, bnb, gaps))
 
-    async def positions_text(self):
-        """/포지션 답 — 지금 포지션. 바이낸스에는 30초에 한 번까지만 물음(연달아 불러도 같은 답)."""
+    async def positions_message(self):
+        """/포지션 답 글(머리 한 줄 + 종목 카드). 바이낸스에는 30초에 한 번까지만 물음(연달아 불러도 같은 답)."""
         now = time.time()
         cache = getattr(self, "_pos_cache", None)
         if not cache or now - cache[0] > 30:
-            cache = self._pos_cache = (now, await self.b.positions())
-        when = fmt.kst_text(int(cache[0] * 1000))
-        lines = summary.position_lines(cache[1])
-        if not lines:
-            return "📌 운영자는 지금 들고 있는 포지션이 없음 · %s 기준" % when
-        return "\n".join(["📌 운영자가 지금 들고 있는 포지션 · %s 기준" % when] + lines)
+            positions = await self.b.positions()
+            try:
+                equity = (await self.b.account()).get("totalMarginBalance")
+            except Exception as e:                      # 증거금을 못 받아도 포지션은 보여 줌 (레버리지 줄만 빠짐)
+                store.log("증거금 조회 실패: %s" % e)
+                equity = None
+            cache = self._pos_cache = (now, positions, equity)
+        return summary.positions_message(cache[1], cache[2], fmt.kst_text(int(cache[0] * 1000)))
 
     # ------------------------------------------------------------------ 안쪽
     async def emit(self, msgs, recs):

@@ -34,20 +34,65 @@ def _sum_usd(rows, bnb_price):
     return total, converted
 
 
+CARD_LONG, CARD_SHORT, CARD_REST = 2533018, 15684432, 9807270    # 카드 왼쪽 띠 색 — 캔들 사진의 초록 · 빨강, 나머지는 회색
+MAX_CARDS = 10                                                     # 디스코드 글 하나에 카드(embed)는 10장까지
+
+
+def _basics(p):
+    """positionRisk 한 줄 → (기호, 방향 +1/−1, 수량, 거래 크기)."""
+    amt = dec(p.get("positionAmt"))
+    d = 1 if amt > 0 else -1
+    if p.get("positionSide") in ("LONG", "SHORT"):
+        d = 1 if p["positionSide"] == "LONG" else -1
+    notional = abs(dec(p.get("notional"))) or abs(amt) * dec(p.get("markPrice"))
+    return base_of(p.get("symbol", "")), d, amt, notional
+
+
 def position_lines(positions):
     """바이낸스 positionRisk 줄들 → '· 솔라나(SOL) 롱 12 SOL · 평균 가격 $150.25 · 약 $1,803어치(레버리지 포함) · 미실현 −$12.00'."""
     out = []
     for p in sorted(positions, key=lambda r: r.get("symbol", "")):
-        amt = dec(p.get("positionAmt"))
-        side = "롱" if amt > 0 else "숏"
-        if p.get("positionSide") in ("LONG", "SHORT"):
-            side = "롱" if p["positionSide"] == "LONG" else "숏"
-        notional = abs(dec(p.get("notional"))) or abs(amt) * dec(p.get("markPrice"))
-        base = base_of(p.get("symbol", ""))
+        base, d, amt, notional = _basics(p)
         out.append("· %s %s %s · 평균 가격 %s · %s · 미실현 %s" % (
-            names.label(base), side, names.amount(amt, base), fmt.dollar(dec(p.get("entryPrice"))),
+            names.label(base), fmt.side_word(d), names.amount(amt, base), fmt.price2(p.get("entryPrice")),
             fmt.worth(notional), fmt.usd(dec(p.get("unRealizedProfit")), sign=True)))
     return out
+
+
+def positions_message(positions, equity, when):
+    """/포지션 답: 머리 한 줄 + 종목마다 카드(embed) 한 장. 카드 안은 한 줄에 한 가지, 금액은 소수 둘째 자리까지.
+
+    실제 레버리지 = 거래 크기 ÷ 증거금. 교차 마진은 계좌 전체 증거금(equity = totalMarginBalance)으로,
+    격리 마진 포지션은 그 포지션에 넣은 증거금으로 나눔 — 바이낸스에 정해 둔 배율(예: 20배)이 아니라 실제로 쓰고 있는 배율.
+    equity 를 모르면 레버리지 줄은 뺌."""
+    if not positions:
+        return {"content": "📌 운영자는 지금 들고 있는 포지션이 없음 · %s 기준" % when, "embeds": []}
+    equity = dec(equity)
+    cards, total = [], ZERO
+    for p in sorted(positions, key=lambda r: r.get("symbol", "")):
+        base, d, amt, notional = _basics(p)
+        total += notional
+        iso = dec(p.get("isolatedMargin"))
+        margin = iso if iso > 0 else equity
+        lines = ["수량 **%s**" % names.amount(amt, base), "평균 가격 **%s**" % fmt.price2(p.get("entryPrice"))]
+        if dec(p.get("markPrice")) > 0:
+            lines.append("지금 가격 **%s**" % fmt.price2(p.get("markPrice")))
+        lines.append("거래 크기 **%s**" % fmt.usd(notional))
+        if margin > 0:
+            lines.append("실제 레버리지 **%s**" % fmt.times(notional / margin))
+        lines.append("미실현 손익 **%s**" % fmt.usd(dec(p.get("unRealizedProfit")), sign=True))
+        cards.append({"title": "%s %s · %s" % ("🟢" if d > 0 else "🔴", names.label(base), fmt.side_word(d)),
+                      "description": "\n".join(lines), "color": CARD_LONG if d > 0 else CARD_SHORT})
+    head = "📌 **운영자 포지션** · %s 기준" % when
+    if len(cards) > 1 and equity > 0:
+        head += "\n전체 실제 레버리지 **%s**" % fmt.times(total / equity)
+    if len(cards) > MAX_CARDS:
+        rest = cards[MAX_CARDS - 1:]
+        cards = cards[:MAX_CARDS - 1] + [{"title": "외 %d개" % len(rest), "color": CARD_REST,
+                                           "description": "\n".join("· " + c["title"] for c in rest)}]
+    if equity > 0:
+        cards[-1]["footer"] = {"text": "실제 레버리지 = 거래 크기 ÷ 증거금"}
+    return {"content": head, "embeds": cards}
 
 
 def build_text(start_ms, end_ms, fills, realized_rows, fee_rows, funding_rows, positions, bnb_price=None, gaps=()):

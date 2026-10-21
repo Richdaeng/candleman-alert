@@ -71,7 +71,7 @@ $154.90에 20주 · 약 $3,098어치(레버리지 포함) · 바로 체결(시�
 - **읽기 전용 키**: 주문 · 출금 함수는 일부러 만들지 않았고, `check` 명령이 키에 거래 · 출금 권한이 켜져 있으면 경고합니다.
 - **키는 폰에만**: `.env` 파일(나만 읽기 권한)에만 저장합니다. 저장소 · 기록 · 디스코드 글에는 넣지 않습니다.
 - **Termux 권한 0개**: 저장공간 · 연락처 · 문자 · 위치 권한이 필요 없습니다. 물어보면 주지 마세요.
-- **자동 업데이트 없음**: 코드는 내가 확인하고 직접 `git pull` 할 때만 바뀝니다.
+- **자동 업데이트 없음**: 코드는 내가 확인하고 직접 `termux/update.sh`(= `git pull` 뒤 다시 켜기)를 실행할 때만 바뀝니다.
 
 ## 폰에 설치 (갤럭시 · Termux 플레이 스토어 판)
 
@@ -103,6 +103,7 @@ python -m candleman check
 | `./termux/status.sh` | 돌고 있는지 · 최근 기록 |
 | `./termux/stop.sh` | 멈춤 |
 | `./termux/start.sh` | 시작 |
+| `./termux/update.sh` | 새 코드를 받고 다시 켬 (wake lock 은 그대로) |
 | `python -m candleman summary` | 지난 요약 구간을 지금 다시 올림 |
 | `python -m candleman demo` | 알림 글 모양 보기 (인터넷 안 씀) |
 | `python -m candleman bot` | /포지션 봇 토큰 넣기 · 바꾸기 (안 보이게) |
@@ -111,6 +112,11 @@ python -m candleman check
 ## /포지션 명령 봇 (선택)
 
 `#잡담방`에서 `/포지션`을 치면 운영자가 지금 들고 있는 포지션을 모두에게 보이게 답합니다. 웹후크와 따로 '디스코드 봇'이 하나 필요합니다.
+
+답은 종목마다 카드 한 장(롱은 초록 · 숏은 빨강 띠)이고, 한 줄에 한 가지씩 보입니다: 수량 · 평균 가격 · 지금 가격 · 거래 크기 · 실제 레버리지 · 미실현 손익.
+금액은 소수 둘째 자리까지($1 보다 싼 가격만 유효숫자 네 자리). 실제 레버리지 = 거래 크기 ÷ 증거금
+(교차 마진은 계좌 전체 증거금, 격리 마진은 그 포지션에 넣은 증거금) — 바이낸스에 정해 둔 배율(예: 20배)이 아니라 실제로 쓰고 있는 배율입니다.
+증거금 금액 자체는 보이지 않습니다.
 
 1. https://discord.com/developers/applications → **New Application** → 이름(예: 매매일지봇) → 만들기
 2. **Bot** 메뉴 → **Reset Token** → 토큰 복사(한 번만 보임). **Public Bot** 은 끄고, Privileged Gateway Intents 는 모두 꺼 둡니다.
@@ -128,7 +134,14 @@ python -m candleman check
 GitHub에서 바뀐 내용을 먼저 확인한 뒤:
 
 ```
-cd ~/candleman-alert && ./termux/stop.sh && git -c core.fileMode=false pull && ./termux/start.sh
+~/candleman-alert/termux/update.sh
+```
+
+새 코드를 받고(`git pull`) 돌던 프로그램만 다시 켭니다. Termux 의 wake lock 은 건드리지 않습니다.
+`update.sh` 가 아직 없는 옛 설치는 처음 한 번만:
+
+```
+cd ~/candleman-alert && git -c core.fileMode=false pull && bash termux/update.sh
 ```
 
 `-c core.fileMode=false` 는 설치 때 준 실행 권한(chmod) 차이 때문에 `git pull` 이 멈추지 않게 하는 것입니다.

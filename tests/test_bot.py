@@ -45,9 +45,9 @@ class FakeApp:
         self.d = FakeDiscord()
         self.asked = 0
 
-    async def positions_text(self):
+    async def positions_message(self):
         self.asked += 1
-        return "📌 운영자가 지금 들고 있는 포지션 · 10/21 11:00 기준\n· 한국 주식 ETF(EWY) 롱 20주 · …"
+        return {"content": "📌 **운영자 포지션** · 10/21 11:00 기준", "embeds": [{"title": "🟢 한국 주식 ETF(EWY) · 롱", "description": "수량 **20주**"}]}
 
 
 OWNER = "99"
@@ -88,7 +88,8 @@ class BotTest(unittest.TestCase):
         calls = self.run_one(interaction(1))
         self.assertEqual([(m, p) for m, p, _, _ in calls], [("POST", "/interactions/i1/tok1/callback"), ("PATCH", "/webhooks/app1/tok1/messages/@original")])
         self.assertEqual(calls[0][2], {"type": 5})                       # 공개 답 ('생각 중…' 뒤 내용)
-        self.assertTrue(calls[1][2]["content"].startswith("📌 운영자가 지금 들고 있는 포지션"))
+        self.assertTrue(calls[1][2]["content"].startswith("📌 **운영자 포지션**"))
+        self.assertEqual(calls[1][2]["embeds"][0]["title"], "🟢 한국 주식 ETF(EWY) · 롱")         # 종목 카드가 같이 감
         self.assertFalse(any(auth for _, _, _, auth in calls))           # 답할 때는 봇 토큰을 쓰지 않음
 
     def test_other_channel_gets_private_hint(self):
@@ -151,24 +152,87 @@ class BotTest(unittest.TestCase):
         self.assertEqual(self.run_one(d), [])
 
 
-class PositionsTextTest(unittest.TestCase):
-    def test_cached_for_thirty_seconds(self):
+EWY = {"symbol": "EWYUSDT", "positionAmt": "20", "entryPrice": "152.83045678", "markPrice": "155.00000000",
+       "notional": "3100.00000000", "unRealizedProfit": "12.49876543", "isolatedMargin": "0.00000000"}
+
+
+class PositionsMessageTest(unittest.TestCase):
+    """/포지션 답 — 바이낸스가 주는 긴 소수(8자리)를 줄이고, 실제 레버리지(거래 크기 ÷ 증거금)를 카드에 넣음."""
+
+    def setUp(self):
+        tmp = tempfile.mkdtemp()
+        self.old = (store.DATA_DIR, store.STATE, store.JOURNAL, store.LOG)
+        store.DATA_DIR = tmp
+        store.STATE, store.JOURNAL, store.LOG = (os.path.join(tmp, n) for n in ("state.json", "journal.jsonl", "app.log"))
+
+    def tearDown(self):
+        store.DATA_DIR, store.STATE, store.JOURNAL, store.LOG = self.old
+
+    def ask(self, positions, account=None, times=1):
         from candleman.app import App
+        asked = {"positions": 0, "account": 0}
 
         class FB:
-            n = 0
-
             async def positions(self):
-                FB.n += 1
-                return [{"symbol": "EWYUSDT", "positionAmt": "20", "entryPrice": "152.83", "notional": "3100", "unRealizedProfit": "12.5"}]
+                asked["positions"] += 1
+                return positions
+
+            async def account(self):
+                asked["account"] += 1
+                if account is None:
+                    raise RuntimeError("연결 안 됨")
+                return account
         app = App.__new__(App)
         app.b = FB()
-        t1 = asyncio.run(app.positions_text())
-        t2 = asyncio.run(app.positions_text())
-        self.assertEqual(FB.n, 1)
-        self.assertEqual(t1, t2)
-        self.assertTrue(t1.startswith("📌 운영자가 지금 들고 있는 포지션 · "))
-        self.assertIn("· 한국 주식 ETF(EWY) 롱 20주 · 평균 가격 $152.83 · 약 $3,100어치(레버리지 포함) · 미실현 +$12.50", t1)
+        msgs = [asyncio.run(app.positions_message()) for _ in range(times)]
+        return msgs, asked
+
+    def test_card_has_one_fact_per_line_and_two_decimals(self):
+        (m1, m2), asked = self.ask([EWY], {"totalMarginBalance": "3875.00000000"}, times=2)
+        self.assertEqual(asked, {"positions": 1, "account": 1})          # 30초 안에는 바이낸스에 다시 묻지 않음
+        self.assertEqual(m1, m2)
+        self.assertTrue(m1["content"].startswith("📌 **운영자 포지션** · "))
+        self.assertNotIn("전체", m1["content"])                           # 하나뿐이면 '전체' 줄은 없음
+        card, = m1["embeds"]
+        self.assertEqual(card["title"], "🟢 한국 주식 ETF(EWY) · 롱")
+        self.assertEqual(card["color"], 2533018)
+        self.assertEqual(card["description"].split("\n"), [
+            "수량 **20주**", "평균 가격 **$152.83**", "지금 가격 **$155.00**", "거래 크기 **$3,100.00**",
+            "실제 레버리지 **0.8배**", "미실현 손익 **+$12.50**"])
+        self.assertEqual(card["footer"], {"text": "실제 레버리지 = 거래 크기 ÷ 증거금"})
+
+    def test_several_positions_short_card_and_isolated_margin(self):
+        btc = {"symbol": "BTCUSDT", "positionAmt": "-0.050", "entryPrice": "82000.1", "markPrice": "81000",
+               "notional": "-4050", "unRealizedProfit": "-3", "isolatedMargin": "0"}
+        sol = {"symbol": "SOLUSDT", "positionAmt": "10", "entryPrice": "150", "markPrice": "150",
+               "notional": "1500", "unRealizedProfit": "0", "isolatedMargin": "300"}
+        (m,), _ = self.ask([sol, EWY, btc], {"totalMarginBalance": "5000"})
+        self.assertIn("\n전체 실제 레버리지 **1.73배**", m["content"])     # (4050 + 3100 + 1500) ÷ 5000
+        b, e, s = m["embeds"]                                           # 기호 순서: BTC · EWY · SOL
+        self.assertEqual((b["title"], b["color"]), ("🔴 비트코인(BTC) · 숏", 15684432))
+        self.assertIn("수량 **0.05 BTC**", b["description"])
+        self.assertIn("평균 가격 **$82,000.10**", b["description"])
+        self.assertIn("실제 레버리지 **0.81배**", b["description"])          # 교차 마진: 4050 ÷ 계좌 증거금 5000
+        self.assertIn("미실현 손익 **−$3.00**", b["description"])
+        self.assertIn("실제 레버리지 **5배**", s["description"])             # 격리 마진: 1500 ÷ 그 포지션 증거금 300
+        self.assertNotIn("footer", b)
+        self.assertIn("footer", s)                                       # 설명은 마지막 카드에만
+
+    def test_without_margin_shows_cards_without_leverage(self):
+        (m,), _ = self.ask([EWY], None)
+        self.assertNotIn("레버리지", m["embeds"][0]["description"])
+        self.assertNotIn("footer", m["embeds"][0])
+
+    def test_no_positions(self):
+        (m,), _ = self.ask([], {"totalMarginBalance": "100"})
+        self.assertTrue(m["content"].startswith("📌 운영자는 지금 들고 있는 포지션이 없음 · "))
+        self.assertEqual(m["embeds"], [])
+
+    def test_more_than_ten_positions_fold_into_last_card(self):
+        many = [dict(EWY, symbol="C%02dUSDT" % i) for i in range(12)]
+        (m,), _ = self.ask(many, {"totalMarginBalance": "100000"})
+        self.assertEqual(len(m["embeds"]), 10)
+        self.assertEqual(m["embeds"][-1]["title"], "외 3개")
 
 
 if __name__ == "__main__":

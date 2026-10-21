@@ -27,7 +27,7 @@ class SummaryTest(unittest.TestCase):
         realized = [{"income": "47.5", "asset": "USDT"}, {"income": "-10.25", "asset": "USDT"}]
         fees = [{"income": "-1.2", "asset": "USDT"}, {"income": "-0.001", "asset": "BNB"}]
         funding = [{"income": "-0.3333", "asset": "USDT"}]
-        pos = [{"symbol": "SOLUSDT", "positionAmt": "12", "entryPrice": "150.25", "notional": "1803.00", "unRealizedProfit": "-12.00", "positionSide": "BOTH"}]
+        pos = [{"symbol": "SOLUSDT", "positionAmt": "12", "entryPrice": "150.24987654", "notional": "1803.00", "unRealizedProfit": "-12.00", "positionSide": "BOTH"}]
         text = summary.build_text(s, e, fills, realized, fees, funding, pos, bnb_price="600")
         self.assertEqual(text.split("\n"), [
             "📊 10/21 요약 (10/20 22:00 ~ 10/21 22:00)",
@@ -161,6 +161,20 @@ class IntroTest(unittest.TestCase):
         asyncio.run(app._introduce("KORUUSDT"))
         self.assertEqual(app.d.sent, [])
         self.assertNotIn("KORU", app.state.get("introduced", []))   # 나중에 웹후크를 넣으면 그때 소개
+
+
+class FmtTest(unittest.TestCase):
+    def test_price2_cuts_long_decimals(self):
+        self.assertEqual(fmt.price2("152.83045678"), "$152.83")
+        self.assertEqual(fmt.price2("82000"), "$82,000.00")
+        self.assertEqual(fmt.price2("0.0876543"), "$0.08765")          # $1 보다 싼 것은 유효숫자 네 자리
+        self.assertEqual(fmt.price2("-1.005"), "−$1.01")
+
+    def test_times(self):
+        self.assertEqual(fmt.times("0.80"), "0.8배")
+        self.assertEqual(fmt.times("1.255"), "1.26배")
+        self.assertEqual(fmt.times("2"), "2배")
+        self.assertEqual(fmt.times("0.004"), "0.01배 미만")
 
 
 if __name__ == "__main__":

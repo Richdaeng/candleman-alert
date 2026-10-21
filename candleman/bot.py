@@ -61,7 +61,7 @@ def whoami(token):
 class Bot:
     def __init__(self, token, app, channel_name="잡담방"):
         self._token = token
-        self.app = app                       # app.positions_text() · app.d(디스코드 웹후크) · app.state 를 씀
+        self.app = app                       # app.positions_message() · app.d(디스코드 웹후크) · app.state 를 씀
         self.channel_name = channel_name
         self.app_id = None
         self.seq = None
@@ -235,9 +235,10 @@ class Bot:
             if verdict != "ok":
                 return await self._reply(iid, tok, "⏳ 지금은 /포지션을 쓸 수 없음. 나중에 다시 시도 바람.", private=True)
         await self.rest("POST", "/interactions/%s/%s/callback" % (iid, tok), {"type": 5}, auth=False)   # '생각 중…' 표시
-        text = await self.app.positions_text()
+        msg = await self.app.positions_message()
         await self.rest("PATCH", "/webhooks/%s/%s/messages/@original" % (self.app_id, tok),
-                        {"content": text[:2000], "allowed_mentions": {"parse": []}}, auth=False)
+                        {"content": msg["content"][:2000], "embeds": msg.get("embeds", []), "allowed_mentions": {"parse": []}},
+                        auth=False)
 
     async def _reply(self, iid, tok, text, private=False):
         data = {"content": text, "allowed_mentions": {"parse": []}}

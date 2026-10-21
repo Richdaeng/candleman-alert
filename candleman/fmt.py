@@ -67,6 +67,26 @@ def dollar(d):
     return "$" + s
 
 
+def price2(d):
+    """포지션 카드 · 요약의 가격: $1 이상은 소수 둘째 자리까지('$152.83' · '$82,000.00'), $1 보다 작으면
+    유효숫자 넷째 자리까지('$0.08765'). 바이낸스 평균 가격의 긴 소수(152.83045678)를 줄임."""
+    v = dec(d)
+    a = abs(v)
+    if a >= 1 or a == 0:
+        s = "{:,}".format(a.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    else:
+        s = plain(a.quantize(Decimal(1).scaleb(-min(8, 3 - a.adjusted())), rounding=ROUND_HALF_UP))
+    return (MINUS if v < 0 else "") + "$" + s
+
+
+def times(x):
+    """배율: '0.8배' · '1.26배' · '2배' (소수 둘째 자리까지, 끝의 0 은 지움)."""
+    v = dec(x)
+    if ZERO < v < Decimal("0.01"):
+        return "0.01배 미만"
+    return "%s배" % plain(v.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
 def usd_about(d):
     """'약 …어치'에 쓰는 금액. $100 이상은 센트를 뺌 ('$4,100'), 그보다 작으면 센트까지."""
     v = abs(dec(d))
