@@ -43,6 +43,11 @@ async def _check(cfg):
     pos = await b.positions()
     oo = await b.open_orders()
     print("✅ 바이낸스 선물 조회 성공 · 포지션 %d개 · 미체결 주문 %d개" % (len(pos), len(oo)))
+    if cfg.get("spot", True):
+        try:
+            print("✅ 바이낸스 현물 조회 성공 · 자산 %d개" % len(await b.spot_balances()))
+        except Exception as e:
+            print("⚠️ 현물 조회 실패 (선물 알림은 그대로): %s" % e)
     d = Discord(cfg["hooks"])
     for ch in ("status",):
         d.send_now(ch, "✅ 연결 시험 · 이 글이 보이면 웹후크가 맞음 (python -m candleman check)")

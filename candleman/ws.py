@@ -10,6 +10,7 @@ import hashlib
 import os
 import ssl
 import struct
+import time
 from urllib.parse import urlparse
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -27,6 +28,7 @@ class WebSocket:
         self.r = reader
         self.w = writer
         self.closed = False
+        self.last_rx = time.monotonic()      # 마지막으로 무엇이든(ping 포함) 받은 때 — 살아 있는 연결인지 볼 때 씀
 
     @classmethod
     async def connect(cls, url, timeout=20):
@@ -90,7 +92,23 @@ class WebSocket:
         data = await self.r.readexactly(n) if n else b""
         if mask:
             data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+        self.last_rx = time.monotonic()
         return bool(fin), opcode, data
+
+    async def recv_alive(self, idle_s):
+        """다음 글자 메시지를 기다림. 조용한 계정은 몇 시간씩 메시지가 없으므로 시간 제한은 '아무것도(ping 도) 안 온 시간'으로 봄
+        → idle_s 넘게 아무것도 없으면 asyncio.TimeoutError (죽은 연결). 읽던 프레임을 중간에 끊지 않게 recv 를 따로 돌림."""
+        task = asyncio.ensure_future(self.recv())
+        try:
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=min(idle_s, 30))
+                if done:
+                    return task.result()
+                if time.monotonic() - self.last_rx > idle_s:
+                    raise asyncio.TimeoutError()
+        finally:
+            if not task.done():
+                task.cancel()
 
     async def recv(self):
         """다음 글자 메시지를 돌려줌. ping 은 알아서 pong, close 면 WSClosed."""

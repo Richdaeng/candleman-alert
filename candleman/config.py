@@ -52,6 +52,7 @@ def load(path=ENV_PATH):
             "bot_token": e.get("DISCORD_BOT_TOKEN") or None,              # 있으면 /포지션 명령 봇을 켬
             "command_channel": e.get("DISCORD_COMMAND_CHANNEL") or "잡담방",
             "auto_update": e.get("AUTO_UPDATE", "1").strip() != "0",      # 매일 stable 판 확인 (0 이면 끔)
+            "spot": e.get("SPOT", "1").strip() != "0",                    # 현물 체결 알림 · 보유 (0 이면 끔)
             "update_hour": _hour(e, "UPDATE_HOUR", "5")}
 
 

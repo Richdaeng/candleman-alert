@@ -10,6 +10,7 @@ from . import fmt, names, notices, store, summary, updater
 from .binance import WS_PRIVATE, Binance, BinanceError
 from .discord import Discord
 from .fmt import dec
+from .spotfeed import SpotFeed
 from .tracker import Tracker, base_of
 from .ws import WebSocket, WSClosed
 
@@ -43,6 +44,7 @@ class App:
         self._outage_told = False
         self._pos_due = None                 # 이 시각(ms)이 지나면 #현재포지션을 견줘 봄
         self._pos_posting = False
+        self.spot = SpotFeed(self) if cfg.get("spot", True) else None   # 현물 체결 알림 · 보유 (SPOT=0 이면 끔)
 
     # ------------------------------------------------------------------ 시작
     async def run(self):
@@ -52,6 +54,8 @@ class App:
             pass                                          # 윈도에서 시험할 때
         asyncio.create_task(self.d.worker())
         await self._start_until_ok()
+        if self.spot:
+            asyncio.create_task(self.spot.run_forever())
         asyncio.create_task(self.ticker())
         asyncio.create_task(self.scheduler())
         if self.cfg.get("bot_token"):                 # /포지션 명령 봇 (토큰을 넣었을 때만)
@@ -135,7 +139,7 @@ class App:
                 backoff = 1
                 keep = asyncio.create_task(self.keepalive())
                 while True:
-                    raw = await asyncio.wait_for(self.ws.recv(), READ_TIMEOUT_S)
+                    raw = await self.ws.recv_alive(READ_TIMEOUT_S)    # 조용해도 서버 ping(3분마다)이 오면 기다림
                     if isinstance(raw, bytes):
                         continue
                     ev = json.loads(raw)
@@ -231,6 +235,8 @@ class App:
             try:
                 msgs, recs = self.t.tick(now_ms())
                 await self.emit(msgs, recs)
+                if self.spot:
+                    await self.spot.handle(*self.spot.tick(now_ms()))
             except Exception as e:
                 store.log("tick 오류: %s" % e)
             i += 1
@@ -285,8 +291,14 @@ class App:
             except Exception as e:                      # 증거금을 못 받아도 포지션은 보여 줌 (레버리지 줄만 빠짐)
                 store.log("증거금 조회 실패: %s" % e)
                 equity = None
-            cache = self._pos_cache = (now, positions, equity)
-        return summary.positions_message(cache[1], cache[2], fmt.kst_text(int(cache[0] * 1000)))
+            shown = []
+            if getattr(self, "spot", None):
+                try:
+                    _, shown = await self.spot.holdings()
+                except Exception as e:                  # 현물을 못 받아도 선물 포지션은 보여 줌
+                    store.log("현물 보유 조회 실패: %s" % e)
+            cache = self._pos_cache = (now, positions, equity, shown)
+        return summary.positions_message(cache[1], cache[2], fmt.kst_text(int(cache[0] * 1000)), cache[3] if len(cache) > 3 else None)
 
     # ------------------------------------------------------------------ 안쪽
     async def emit(self, msgs, recs):
@@ -307,18 +319,21 @@ class App:
         self._pos_posting = True
         try:
             positions = await self.b.positions()
-            sig = sorted("%s|%s|%s" % (r.get("symbol"), r.get("positionSide") or "BOTH", fmt.plain(r.get("positionAmt")))
-                         for r in positions)
+            spot_all, shown = await self.spot.holdings(with_avg=False) if getattr(self, "spot", None) else ([], [])
+            sig = sorted(["%s|%s|%s" % (r.get("symbol"), r.get("positionSide") or "BOTH", fmt.plain(r.get("positionAmt")))
+                          for r in positions] + ["SPOT|%s|%s" % (r["asset"], fmt.plain(r["qty"])) for r in spot_all])
             if sig == self.state.get("positions_posted"):
                 return
+            if shown:
+                await self.spot.add_avg(shown)
             try:
                 equity = (await self.b.account()).get("totalMarginBalance")
             except Exception as e:
                 store.log("증거금 조회 실패: %s" % e)
                 equity = None
             now = time.time()
-            self._pos_cache = (now, positions, equity)       # /포지션도 같은 값을 씀
-            msg = summary.positions_message(positions, equity, fmt.kst_text(int(now * 1000)))
+            self._pos_cache = (now, positions, equity, shown)  # /포지션도 같은 값을 씀
+            msg = summary.positions_message(positions, equity, fmt.kst_text(int(now * 1000)), shown)
             await self.d.put("positions", msg["content"], msg["embeds"])
             self.state["positions_posted"] = sig
             store.save_state(self.state)
