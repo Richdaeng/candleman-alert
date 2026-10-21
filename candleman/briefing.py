@@ -24,6 +24,7 @@ LAST_HOUR = 12             # 이 시각이 지나면 그날 브리핑은 건너�
 MAX_LINES, MAX_CHARS = 7, 90
 COLOR = 3447003            # 브리핑 카드 띠 색 (파랑)
 FOOTER = "투자 권유 아님 · 숫자: 금융투자협회 · 소식 · 일정: AI가 뉴스 검색으로 정리 (틀릴 수 있음)"
+STAR_NOTE = "★ 중요도 = 2016~2026년 같은 일정 날 주가 · 코인 · 금리가 평소보다 크게 움직인 정도"
 WEEKDAY = "월화수목금토일"
 
 
@@ -135,7 +136,7 @@ def parse_brief(text, today):
 
 def compose(today, rows, brief):
     """디스코드 글: 머리 한 줄 + 카드(신용 · 미수 / 밤사이 / 다가오는 일정). brief 가 None 이면 숫자 카드만 + 안내 한 줄."""
-    cards = []
+    cards, rated = [], False
     c = credit_card(rows)
     if c:
         cards.append(c)
@@ -148,7 +149,8 @@ def compose(today, rows, brief):
             cards.append({"title": "📅 다가오는 일정" + (" · 중요도 5점 만점" if rated else ""), "description": "\n".join(plan),
                           "color": COLOR})
     if cards:
-        cards[-1]["footer"] = {"text": FOOTER if brief else "투자 권유 아님 · 숫자: 금융투자협회"}
+        text = FOOTER if brief else "투자 권유 아님 · 숫자: 금융투자협회"
+        cards[-1]["footer"] = {"text": STAR_NOTE + "\n" + text if rated else text}      # 별이 무엇을 뜻하는지 한 줄
     head = "🗞️ **%d/%d (%s) 아침 경제 브리핑**" % (today.month, today.day, WEEKDAY[today.weekday()])
     if not brief:
         head += "\n밤사이 소식 · 일정은 오늘 준비되지 않음"

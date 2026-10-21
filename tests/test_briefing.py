@@ -70,7 +70,10 @@ class BriefTest(unittest.TestCase):
         self.assertEqual([c["title"] for c in m["embeds"]], ["💳 신용 · 미수 잔고 (10/19 월 기준)", "🌙 밤사이",
                                                             "📅 다가오는 일정 · 중요도 5점 만점"])
         self.assertEqual(m["embeds"][1]["description"], "· 미국 증시: 나스닥 +1.2% · S&P500 +0.8%\n· 비트코인 $67,200 (+2.1%)")
-        self.assertEqual(m["embeds"][-1]["footer"]["text"], briefing.FOOTER)               # AI 가 정리했다는 것을 밝힘
+        self.assertEqual(m["embeds"][-1]["footer"]["text"], briefing.STAR_NOTE + "\n" + briefing.FOOTER)  # 별 뜻 + AI 정리
+        plain = briefing.compose(TODAY, rows, briefing.parse_brief(brief_json(schedule=["11/3 (화) 미국 중간선거"]), TODAY))
+        self.assertEqual(plain["embeds"][-1]["title"], "📅 다가오는 일정")                   # 별이 없으면 설명도 없음
+        self.assertEqual(plain["embeds"][-1]["footer"]["text"], briefing.FOOTER)
         bare = briefing.compose(TODAY, rows, None)
         self.assertTrue(bare["content"].endswith("밤사이 소식 · 일정은 오늘 준비되지 않음"))
         self.assertEqual(len(bare["embeds"]), 1)
