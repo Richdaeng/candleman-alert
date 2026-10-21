@@ -28,9 +28,11 @@ class App:
         self.d = Discord(cfg["hooks"], log=store.log)
         self.t = Tracker()
         self.hour = cfg["summary_hour"]
+        self.cfg = cfg
         self.state = store.load_state()
         self.down_since = None
         self.ws = None
+        self._pos_cache = None
 
     # ------------------------------------------------------------------ 시작
     async def run(self):
@@ -42,6 +44,9 @@ class App:
         await self.bootstrap()
         asyncio.create_task(self.ticker())
         asyncio.create_task(self.scheduler())
+        if self.cfg.get("bot_token"):                 # /포지션 명령 봇 (토큰을 넣었을 때만)
+            from .bot import Bot
+            asyncio.create_task(Bot(self.cfg["bot_token"], self, self.cfg.get("command_channel") or "잡담방").run_forever())
         await self.stream_forever()
 
     async def bootstrap(self):
@@ -204,6 +209,18 @@ class App:
         bnb = await self.b.price("BNBUSDT") if any((r.get("asset") == "BNB") for r in fees + funding) else None
         gaps = [(a, b) for a, b in self.state.get("gaps", []) if b > start and a < end]
         await self.d.put("summary", summary.build_text(start, end, fills, realized, fees, funding, positions, bnb, gaps))
+
+    async def positions_text(self):
+        """/포지션 답 — 지금 포지션. 바이낸스에는 30초에 한 번까지만 물음(연달아 불러도 같은 답)."""
+        now = time.time()
+        cache = getattr(self, "_pos_cache", None)
+        if not cache or now - cache[0] > 30:
+            cache = self._pos_cache = (now, await self.b.positions())
+        when = fmt.kst_text(int(cache[0] * 1000))
+        lines = summary.position_lines(cache[1])
+        if not lines:
+            return "📌 지금 들고 있는 포지션 없음 · %s 기준" % when
+        return "\n".join(["📌 지금 들고 있는 포지션 · %s 기준" % when] + lines)
 
     # ------------------------------------------------------------------ 안쪽
     async def emit(self, msgs, recs):

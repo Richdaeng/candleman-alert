@@ -105,7 +105,23 @@ python -m candleman check
 | `./termux/start.sh` | 시작 |
 | `python -m candleman summary` | 지난 요약 구간을 지금 다시 올림 |
 | `python -m candleman demo` | 알림 글 모양 보기 (인터넷 안 씀) |
+| `python -m candleman bot` | /포지션 봇 토큰 넣기 · 바꾸기 (안 보이게) |
 | `python -m candleman hook symbols` | 웹후크 주소 하나만 넣거나 바꾸기 (`symbols` · `trade` · `summary` · `status`) — 바꾼 뒤 stop · start |
+
+## /포지션 명령 봇 (선택)
+
+`#잡담방`에서 `/포지션`을 치면 지금 들고 있는 포지션을 모두에게 보이게 답합니다. 웹후크와 따로 '디스코드 봇'이 하나 필요합니다.
+
+1. https://discord.com/developers/applications → **New Application** → 이름(예: 매매일지봇) → 만들기
+2. **Bot** 메뉴 → **Reset Token** → 토큰 복사(한 번만 보임). **Public Bot** 은 끄고, Privileged Gateway Intents 는 모두 꺼 둡니다.
+3. **OAuth2 → URL Generator** → Scopes 에서 `bot` · `applications.commands` 만 고르고, Bot Permissions 는 아무것도 고르지 않습니다 → 맨 아래 주소를 열어 서버를 고르고 승인
+4. 폰에서 `python -m candleman bot` → 토큰 붙여 넣기(안 보임) → `python -m candleman check` → `./termux/stop.sh` → `./termux/start.sh`
+5. `#잡담방`에서 `/포지션`
+
+- 봇도 폰에서 디스코드로 *나가는* 연결만 씁니다. 받은 것에서는 명령 이름 · 채널 · 부른 사람만 보고 아무것도 실행하지 않습니다.
+- 봇에는 서버 권한을 주지 않습니다(명령에 답하는 데는 필요 없음). 토큰은 `.env` 에만 둡니다.
+- 바이낸스에는 30초에 한 번까지만 묻고, 같은 사람이 너무 자주 부르면 한동안 막은 뒤 `#봇-상태`에 알립니다(관리자는 예외).
+- 다른 채널에서 부르면 부른 사람에게만 '#잡담방에서 쓸 수 있음'이 보입니다. 채널을 바꾸려면 `.env` 에 `DISCORD_COMMAND_CHANNEL=채널이름`.
 
 ## 업데이트
 
@@ -139,6 +155,7 @@ rm -rf ~/candleman-alert ~/.termux/boot/boot-candleman.sh
 - `candleman/names.py` 종목 기호 → 읽기 쉬운 이름 (비트코인(BTC) · 한국 주식 ETF(EWY) …)
 - `candleman/summary.py` 하루 요약
 - `candleman/discord.py` 디스코드로 보내기
+- `candleman/bot.py` /포지션 명령 봇 (선택)
 - `candleman/app.py` 본체 (끊기면 다시 붙기 · 요약 시각)
 - `tests/` 가짜 이벤트로 하는 시험 (`python -m unittest discover -s tests`)
 

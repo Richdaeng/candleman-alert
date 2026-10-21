@@ -51,4 +51,6 @@ def load(path=ENV_PATH):
     if not 0 <= hour <= 23:
         raise ConfigError("SUMMARY_HOUR 는 0 ~ 23 숫자여야 해요")
     os.makedirs(DATA_DIR, exist_ok=True)
-    return {"key": e["BINANCE_API_KEY"], "secret": e["BINANCE_API_SECRET"], "hooks": hooks, "summary_hour": hour}
+    return {"key": e["BINANCE_API_KEY"], "secret": e["BINANCE_API_SECRET"], "hooks": hooks, "summary_hour": hour,
+            "bot_token": e.get("DISCORD_BOT_TOKEN") or None,              # 있으면 /포지션 명령 봇을 켬
+            "command_channel": e.get("DISCORD_COMMAND_CHANNEL") or "잡담방"}

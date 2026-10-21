@@ -34,6 +34,22 @@ def _sum_usd(rows, bnb_price):
     return total, converted
 
 
+def position_lines(positions):
+    """바이낸스 positionRisk 줄들 → '· 솔라나(SOL) 롱 12 SOL · 평균 가격 $150.25 · 약 $1,803어치(레버리지 포함) · 미실현 −$12.00'."""
+    out = []
+    for p in sorted(positions, key=lambda r: r.get("symbol", "")):
+        amt = dec(p.get("positionAmt"))
+        side = "롱" if amt > 0 else "숏"
+        if p.get("positionSide") in ("LONG", "SHORT"):
+            side = "롱" if p["positionSide"] == "LONG" else "숏"
+        notional = abs(dec(p.get("notional"))) or abs(amt) * dec(p.get("markPrice"))
+        base = base_of(p.get("symbol", ""))
+        out.append("· %s %s %s · 평균 가격 %s · %s · 미실현 %s" % (
+            names.label(base), side, names.amount(amt, base), fmt.dollar(dec(p.get("entryPrice"))),
+            fmt.worth(notional), fmt.usd(dec(p.get("unRealizedProfit")), sign=True)))
+    return out
+
+
 def build_text(start_ms, end_ms, fills, realized_rows, fee_rows, funding_rows, positions, bnb_price=None, gaps=()):
     orders = {r.get("key") for r in fills if r.get("kind") == "fill"}
     realized, _ = _sum_usd(realized_rows, bnb_price)
@@ -49,16 +65,7 @@ def build_text(start_ms, end_ms, fills, realized_rows, fee_rows, funding_rows, p
              "펀딩비 %s" % fmt.usd(funding, sign=True)]
     if positions:
         lines.append("들고 있는 포지션")
-        for p in sorted(positions, key=lambda r: r.get("symbol", "")):
-            amt = dec(p.get("positionAmt"))
-            side = "롱" if amt > 0 else "숏"
-            if p.get("positionSide") in ("LONG", "SHORT"):
-                side = "롱" if p["positionSide"] == "LONG" else "숏"
-            notional = abs(dec(p.get("notional"))) or abs(amt) * dec(p.get("markPrice"))
-            base = base_of(p.get("symbol", ""))
-            lines.append("· %s %s %s · 평균 가격 %s · %s · 미실현 %s" % (
-                names.label(base), side, names.amount(amt, base), fmt.dollar(dec(p.get("entryPrice"))),
-                fmt.worth(notional), fmt.usd(dec(p.get("unRealizedProfit")), sign=True)))
+        lines += position_lines(positions)
     else:
         lines.append("들고 있는 포지션: 없음")
     if gaps:

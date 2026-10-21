@@ -17,7 +17,9 @@ MAX_MESSAGE = 4 * 1024 * 1024        # 이보다 큰 메시지는 끊음 (이상
 
 
 class WSClosed(Exception):
-    pass
+    def __init__(self, reason="", code=None):
+        super().__init__(reason)
+        self.code = code                 # 서버가 알려 준 끊는 이유 번호 (디스코드 4004 = 토큰 틀림 등)
 
 
 class WebSocket:
@@ -106,7 +108,8 @@ class WebSocket:
                 except Exception:
                     pass
                 await self.close()
-                raise WSClosed(data[2:].decode("utf-8", "replace") if len(data) > 2 else "")
+                code = struct.unpack("!H", data[:2])[0] if len(data) >= 2 else None
+                raise WSClosed(data[2:].decode("utf-8", "replace") if len(data) > 2 else "", code)
             if opcode in (0x1, 0x2):
                 buf, kind = data, opcode
             elif opcode == 0x0:

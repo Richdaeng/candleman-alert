@@ -5,6 +5,7 @@
   python -m candleman demo     가짜 체결로 알림 글이 어떻게 보이는지 화면에만 (인터넷 안 씀)
   python -m candleman summary  지난 요약 구간의 요약을 지금 #일일-요약에 보냄
   python -m candleman hook symbols   웹후크 주소 하나만 넣거나 바꿈 (symbols = #종목설명 · trade · summary · status)
+  python -m candleman bot      /포지션 명령 봇의 토큰을 넣거나 바꿈 (화면에 안 보이게)
 """
 import asyncio
 import sys
@@ -45,6 +46,13 @@ async def _check(cfg):
     for ch in ("status",):
         d.send_now(ch, "✅ 연결 시험 · 이 글이 보이면 웹후크가 맞음 (python -m candleman check)")
     print("✅ #봇-상태 채널로 시험 글을 보냈어요. 디스코드에서 확인해 주세요.")
+    if cfg.get("bot_token"):
+        from .bot import whoami
+        try:
+            print("✅ /포지션 봇 토큰 확인: %s (명령은 #%s에서)" % (await asyncio.to_thread(whoami, cfg["bot_token"]), cfg["command_channel"]))
+        except Exception as e:
+            ok = False
+            print("⚠️ 봇 토큰 확인 실패: %s — python -m candleman bot 으로 다시 넣어 주세요." % e)
     return ok
 
 
@@ -141,6 +149,25 @@ def _set_hook(name):
     return 0
 
 
+def _set_bot_token():
+    """봇 토큰만 넣거나 바꿈. 토큰은 화면에 안 보이게 받고, .env 에만 저장."""
+    import getpass
+    import os
+    if not os.path.exists(config.ENV_PATH):
+        print("설정 파일이 아직 없어요. 먼저 python -m candleman setup")
+        return 1
+    token = getpass.getpass("디스코드 봇 토큰 (붙여 넣어도 안 보임): ").strip()
+    if token.count(".") != 2 or len(token) < 50:
+        print("봇 토큰 모양이 아니에요 (개발자 사이트 → Bot → Reset Token 으로 받은 값)")
+        return 1
+    with open(config.ENV_PATH, encoding="utf-8") as f:
+        lines = [ln.rstrip("\n") for ln in f]
+    lines = [ln for ln in lines if not ln.strip().startswith("DISCORD_BOT_TOKEN=")] + ["DISCORD_BOT_TOKEN=%s" % token]
+    _write_env(lines)
+    print("저장했어요. python -m candleman check 로 확인한 뒤 ./termux/stop.sh → ./termux/start.sh 로 다시 켜 주세요.")
+    return 0
+
+
 def main(argv):
     _console_utf8()
     cmd = argv[1] if len(argv) > 1 else "run"
@@ -152,6 +179,8 @@ def main(argv):
         return 0
     if cmd == "hook":
         return _set_hook(argv[2] if len(argv) > 2 else "symbols")
+    if cmd == "bot":
+        return _set_bot_token()
     try:
         cfg = config.load()
     except config.ConfigError as e:
