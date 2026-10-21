@@ -25,6 +25,16 @@ class Discord:
         """그 채널 웹후크가 따로 있는지 (없으면 보내지 말아야 하는 글을 가릴 때)."""
         return bool(self.urls.get(channel))
 
+    def distinct(self, channels):
+        """같은 웹후크(= 같은 채널)로 가는 것은 하나만 남긴 채널 이름들 (#일일-요약 웹후크를 따로 안 넣었을 때 두 번 가지 않게)."""
+        seen, out = set(), []
+        for ch in channels:
+            url = self.urls.get(ch)
+            if url and url not in seen:
+                seen.add(url)
+                out.append(ch)
+        return out
+
     def _post(self, channel, text, embeds=None):
         url = self.urls.get(channel) or self.urls.get("trade")
         payload = {"allowed_mentions": {"parse": []}}

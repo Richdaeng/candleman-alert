@@ -4,7 +4,7 @@ import json
 import time
 from datetime import datetime, timezone
 
-from . import fmt, names, store, summary
+from . import fmt, names, notices, store, summary
 from .binance import WS_PRIVATE, Binance, BinanceError
 from .discord import Discord
 from .fmt import dec
@@ -66,6 +66,7 @@ class App:
             if changes:
                 await self._post_gap_changes(last_alive, n, changes)
         await self.d.put("status", line)
+        await self._announce(n)
         if "last_summary_end" not in self.state:          # 처음 켠 날은 지난 구간 요약을 건너뜀
             self.state["last_summary_end"] = summary.window_for(n, self.hour)[1]
         self._snapshot()
@@ -232,6 +233,16 @@ class App:
         for r in recs:
             if r.get("kind") == "fill" and r.get("effect") in ("open", "flip"):
                 await self._introduce(r.get("symbol", ""), r.get("t"))
+
+    async def _announce(self, n):
+        """새 판을 처음 켰을 때 안내 글(notices.py)을 정해 둔 채널에 한 번만 올림."""
+        sent = self.state.setdefault("notices_sent", [])
+        for a in notices.due(sent, fmt.kst(n).strftime("%Y-%m-%d")):
+            for ch in self.d.distinct(a["channels"]):
+                await self.d.put(ch, "", [dict(a["embed"])])
+            sent.append(a["id"])
+            store.save_state(self.state)
+            store.log("안내 글 올림: %s" % a["id"])
 
     async def _introduce(self, symbol, t_ms=None):
         """처음 진입한 종목이면 #종목설명에 소개 카드를 올림 (DISCORD_WEBHOOK_SYMBOLS 가 있을 때만, 종목마다 한 번)."""

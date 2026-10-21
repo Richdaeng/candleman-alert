@@ -163,6 +163,55 @@ class IntroTest(unittest.TestCase):
         self.assertNotIn("KORU", app.state.get("introduced", []))   # 나중에 웹후크를 넣으면 그때 소개
 
 
+class AnnounceTest(unittest.TestCase):
+    """새 판을 처음 켰을 때 안내 글을 #실시간-매매 · #일일-요약에 딱 한 번만."""
+
+    def setUp(self):
+        from candleman import store
+        tmp = tempfile.mkdtemp()
+        self.store = store
+        self.old = (store.DATA_DIR, store.STATE, store.JOURNAL, store.LOG)
+        store.DATA_DIR = tmp
+        store.STATE, store.JOURNAL, store.LOG = (os.path.join(tmp, n) for n in ("state.json", "journal.jsonl", "app.log"))
+
+    def tearDown(self):
+        self.store.DATA_DIR, self.store.STATE, self.store.JOURNAL, self.store.LOG = self.old
+
+    def make(self, urls):
+        from candleman.app import App
+        from candleman.discord import Discord
+        app = App.__new__(App)
+        app.d, app.state = Discord(urls), {}
+        return app
+
+    def queued(self, app):
+        out = []
+        while not app.d.q.empty():
+            out.append(app.d.q.get_nowait())
+        return out
+
+    def test_once_to_trade_and_summary(self):
+        app = self.make({"trade": "u1", "summary": "u2", "status": "u3", "symbols": "u4"})
+        asyncio.run(app._announce(ms(2026, 10, 21, 13)))
+        sent = self.queued(app)
+        self.assertEqual([(ch, text) for ch, text, _ in sent], [("trade", ""), ("summary", "")])
+        card, = sent[0][2]
+        self.assertEqual(card["title"], "📢 새 기능 · /포지션")
+        self.assertIn("#잡담방에서 `/포지션`을 입력하면", card["description"])
+        self.assertNotIn("6시간", card["description"])                    # 막는 규칙은 알리지 않음
+        asyncio.run(app._announce(ms(2026, 10, 21, 14)))                  # 다시 켜도
+        self.assertEqual(self.queued(app), [])                             # 또 올리지 않음
+        self.assertEqual(self.store.load_state()["notices_sent"], ["2026-10-21-position-cards"])
+
+    def test_same_webhook_once_and_expired_skipped(self):
+        app = self.make({"trade": "u1", "summary": "u1", "status": "u3"})  # #일일-요약 웹후크를 따로 안 넣은 경우
+        asyncio.run(app._announce(ms(2026, 10, 21, 13)))
+        self.assertEqual([ch for ch, _, _ in self.queued(app)], ["trade"])
+        late = self.make({"trade": "u1", "summary": "u2"})
+        asyncio.run(late._announce(ms(2026, 11, 5, 13)))                   # 기한이 지나면 (새로 설치해도) 안 올림
+        self.assertEqual(self.queued(late), [])
+
+
 class FmtTest(unittest.TestCase):
     def test_price2_cuts_long_decimals(self):
         self.assertEqual(fmt.price2("152.83045678"), "$152.83")
