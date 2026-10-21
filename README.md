@@ -100,6 +100,23 @@ $83,000.00에 0.04 BTC 정리 · 남은 0.06 BTC · 약 $3,320어치 · 바로 �
 체결이 나뉘어 들어와도 3초 조용해진 뒤 한 번만, 지난 글과 같으면 올리지 않습니다(다시 켤 때 · 끊겼다 붙을 때 · 10분마다 한 번 견줌).
 `DISCORD_WEBHOOK_POSITIONS` 를 넣었을 때만 켜집니다(`python -m candleman hook positions`).
 
+`#일일-경제-브리핑` (선택): 매일 08시(한국 시간)에 아침 경제 브리핑을 카드로 올립니다.
+
+```
+🗞️ 10/22 (목) 아침 경제 브리핑
+┃ 💳 신용 · 미수 잔고 (10/20 화 기준)
+┃ 신용융자 30.51조 원 (−5,944억) · 미수금 1.19조 원 (−2,418억)
+┃ 반대매매 227억 원 (미수금의 1.6%) · 투자자예탁금 90.30조 원 (−1.80조)
+┃ 🌙 밤사이  · 미국 증시 … · 비트코인 …
+┃ 📅 다가오는 일정  10/23 (금) … · 11/3 (화) 미국 중간선거
+```
+
+- 숫자는 이 폰이 금융투자협회 종합통계(공개 자료)에서 직접 받습니다. 협회는 전날 수치를 다음 영업일에 올려서 카드 제목에 기준일을 적습니다.
+- 밤사이 소식 · 다가오는 일정은 Claude 클라우드 예약 작업이 매일 07:25에 웹에서 찾아 이 저장소의 `claude/briefing` 가지에 `briefing.json`
+  (`{"date": "YYYY-MM-DD", "overnight": [...], "schedule": [{"when", "what"}]}`)으로 올려 둔 것을 가져옵니다. 오늘 날짜가 아니면 쓰지 않고,
+  줄 수 · 길이를 잘라 짧게 유지합니다. 08:20까지 오지 않으면 숫자만 올리고 `#봇-상태`에 알립니다.
+- `DISCORD_WEBHOOK_BRIEFING` 를 넣었을 때만 켜집니다(`python -m candleman hook briefing`). 시각은 `BRIEFING_HOUR`, 바로 시험은 `python -m candleman briefing`.
+
 글쓴이 이름 · 사진은 프로그램이 정하지 않고 디스코드의 웹후크 설정을 따릅니다(채널 설정 → 연동 → 웹후크에서 바꾸면 바로 반영).
 
 ## 안전하게 만든 점
@@ -220,6 +237,7 @@ rm -rf ~/candleman-alert ~/.termux/boot/boot-candleman.sh
 - `candleman/binance.py` 바이낸스 조회 (읽기만)
 - `candleman/tracker.py` 주문 · 체결 · 포지션 장부와 알림 글
 - `candleman/spot.py` 현물 주문 · 체결 장부 · 평균 매수가 · 알림 글 / `candleman/spotfeed.py` 현물 실시간 연결 · 보유
+- `candleman/briefing.py` 아침 경제 브리핑 (협회 숫자 + 클라우드 작업이 쓴 소식 · 일정)
 - `candleman/names.py` 종목 기호 → 읽기 쉬운 이름 (비트코인(BTC) · 한국 주식 ETF(EWY) …)
 - `candleman/summary.py` 하루 요약
 - `candleman/discord.py` 디스코드로 보내기

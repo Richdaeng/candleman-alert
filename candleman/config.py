@@ -43,6 +43,8 @@ def load(path=ENV_PATH):
         hooks["symbols"] = e["DISCORD_WEBHOOK_SYMBOLS"]
     if e.get("DISCORD_WEBHOOK_POSITIONS"):             # 있으면 포지션이 바뀔 때마다 #현재포지션에 지금 포지션 카드
         hooks["positions"] = e["DISCORD_WEBHOOK_POSITIONS"]
+    if e.get("DISCORD_WEBHOOK_BRIEFING"):              # 있으면 매일 아침 #일일-경제-브리핑
+        hooks["briefing"] = e["DISCORD_WEBHOOK_BRIEFING"]
     for name, url in hooks.items():
         if not url.startswith(WEBHOOK_PREFIXES):
             raise ConfigError("%s 웹후크 주소가 디스코드 주소가 아니에요 (https://discord.com/api/webhooks/ 로 시작해야 함)" % name)
@@ -53,6 +55,8 @@ def load(path=ENV_PATH):
             "command_channel": e.get("DISCORD_COMMAND_CHANNEL") or "잡담방",
             "auto_update": e.get("AUTO_UPDATE", "1").strip() != "0",      # 매일 stable 판 확인 (0 이면 끔)
             "spot": e.get("SPOT", "1").strip() != "0",                    # 현물 체결 알림 · 보유 (0 이면 끔)
+            "briefing_hour": _hour(e, "BRIEFING_HOUR", "8"),              # 아침 경제 브리핑 시각
+            "briefing_url": e.get("BRIEFING_URL") or None,               # 브리핑 글을 받는 곳 (기본: GitHub claude/briefing)
             "update_hour": _hour(e, "UPDATE_HOUR", "5")}
 
 

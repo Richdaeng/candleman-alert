@@ -4,9 +4,10 @@ import json
 import os
 import signal
 import time
-from datetime import datetime, timezone
+import urllib.request
+from datetime import datetime, timedelta, timezone
 
-from . import fmt, names, notices, store, summary, updater
+from . import briefing, fmt, names, notices, store, summary, updater
 from .binance import WS_PRIVATE, Binance, BinanceError
 from .discord import Discord
 from .fmt import dec
@@ -261,6 +262,10 @@ class App:
             except Exception as e:
                 store.log("업데이트 오류: %s" % e)
             try:
+                await self._maybe_briefing(n)
+            except Exception as e:
+                store.log("브리핑 오류: %s %s" % (type(e).__name__, str(e)[:160]))
+            try:
                 start, end = summary.window_for(n, self.hour)
                 if int(self.state.get("last_summary_end") or 0) < end and n - end < LATE_SUMMARY_S * 1000:
                     await self.post_summary(start, end)
@@ -352,6 +357,51 @@ class App:
             self._pos_due = now_ms() + 60_000
         finally:
             self._pos_posting = False
+
+    # ------------------------------------------------------------------ 아침 경제 브리핑
+    def _fetch_brief(self):
+        """클라우드 예약 작업이 GitHub 에 올린 briefing.json (글자 그대로). 못 받으면 None."""
+        url = (getattr(self, "cfg", None) or {}).get("briefing_url") or briefing.BRIEF_URL
+        try:
+            req = urllib.request.Request("%s?t=%d" % (url, int(time.time())), headers={"User-Agent": "candleman-alert"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return r.read().decode("utf-8")
+        except Exception as e:
+            store.log("브리핑 글 받기 실패: %s" % e)
+            return None
+
+    async def post_briefing(self, today, wait_ok=True):
+        """오늘 브리핑을 올림. wait_ok 이고 클라우드 글이 아직 없으면 False (조금 뒤 다시). 올렸으면 True."""
+        text = await asyncio.to_thread(self._fetch_brief)
+        brief = briefing.parse_brief(text, today) if text else None
+        if brief is None and wait_ok:
+            return False
+        try:
+            rows = await asyncio.to_thread(briefing.kofia_rows, today - timedelta(days=14), today)
+        except Exception as e:                            # 숫자를 못 받아도 소식 · 일정은 올림
+            store.log("협회 자료 받기 실패: %s" % e)
+            rows = []
+        msg = briefing.compose(today, rows, brief)
+        await self.d.put("briefing", msg["content"], msg["embeds"])
+        if brief is None:
+            await self.d.put("status", "⚠️ 오늘 브리핑의 밤사이 소식 · 일정을 받지 못해 숫자만 올림 (Claude 클라우드 예약 작업 확인 필요)")
+        return True
+
+    async def _maybe_briefing(self, n):
+        """매일 정한 시각(기본 08시)에 #일일-경제-브리핑. 클라우드 글이 아직 없으면 1분마다 다시 보다가 WAIT_MIN 분이 지나면 숫자만이라도."""
+        if not self.d.has("briefing"):
+            return
+        t = fmt.kst(n)
+        hour = (getattr(self, "cfg", None) or {}).get("briefing_hour", 8)
+        if self.state.get("briefing_posted") == t.date().isoformat() or not hour <= t.hour < briefing.LAST_HOUR:
+            return
+        if n < getattr(self, "_brief_next", 0):
+            return
+        self._brief_next = n + 60_000
+        late = (t.hour - hour) * 60 + t.minute >= briefing.WAIT_MIN
+        if await self.post_briefing(t.date(), wait_ok=not late):
+            self.state["briefing_posted"] = t.date().isoformat()
+            store.save_state(self.state)
 
     # ------------------------------------------------------------------ 업데이트 · 끄기
     def _update_due(self, n):
