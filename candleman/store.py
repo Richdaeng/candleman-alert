@@ -58,7 +58,10 @@ def save_state(st):
 def log(msg):
     _ensure()
     line = time.strftime("%Y-%m-%d %H:%M:%S ") + str(msg)
-    print(line, flush=True)
+    try:
+        print(line, flush=True)
+    except (UnicodeEncodeError, OSError, ValueError):    # 화면이 못 쓰는 글자가 있어도 기록 파일은 남기고 프로그램은 계속
+        pass
     try:
         if os.path.exists(LOG) and os.path.getsize(LOG) > MAX_LOG:
             os.replace(LOG, LOG + ".1")

@@ -18,6 +18,9 @@ READ_TIMEOUT_S = 10 * 60       # 이만큼 아무 소식이 없으면 다시 붙
 REFRESH_S = 23 * 3600          # 24시간 끊김 전에 스스로 새로 붙음
 GAP_NOTE_S = 20                # 이보다 길게 끊겼으면 그사이 바뀐 것을 조회
 LATE_SUMMARY_S = 3 * 3600      # 요약 시각을 놓쳤으면 이만큼 안에서는 늦게라도 보냄
+START_RETRY_S = 10             # 켤 때 바이낸스에 못 붙으면 이만큼 뒤 다시 (두 배씩 늘려 최대 5분)
+OUTAGE_NOTE_S = 2 * 60         # 이보다 오래 바이낸스에 못 붙으면 #봇-상태에 한 번 알림
+NET_ERRORS = (OSError, asyncio.TimeoutError, BinanceError, ValueError)   # 인터넷 · 거래소 쪽 문제 (코드 오류는 아님)
 
 
 def now_ms():
@@ -35,6 +38,7 @@ class App:
         self.down_since = None
         self.ws = None
         self._pos_cache = None
+        self._outage_told = False
 
     # ------------------------------------------------------------------ 시작
     async def run(self):
@@ -43,11 +47,7 @@ class App:
         except (NotImplementedError, AttributeError, RuntimeError, ValueError):
             pass                                          # 윈도에서 시험할 때
         asyncio.create_task(self.d.worker())
-        try:
-            await self.b.sync_time()
-        except Exception as e:
-            store.log("시간 맞추기 실패(계속함): %s" % e)
-        await self.bootstrap()
+        await self._start_until_ok()
         asyncio.create_task(self.ticker())
         asyncio.create_task(self.scheduler())
         if self.cfg.get("bot_token"):                 # /포지션 명령 봇 (토큰을 넣었을 때만)
@@ -78,6 +78,41 @@ class App:
         if "last_summary_end" not in self.state:          # 처음 켠 날은 지난 구간 요약을 건너뜀
             self.state["last_summary_end"] = summary.window_for(n, self.hour)[1]
         self._snapshot()
+        try:                                              # 시작을 마쳤다는 표시 (termux/restart.sh 가 봄)
+            with open(os.path.join(store.DATA_DIR, "started"), "w", encoding="utf-8") as f:
+                f.write(str(n))
+        except OSError:
+            pass
+
+    async def _start_until_ok(self):
+        """켤 때 바이낸스에 못 붙어도 꺼지지 않음: 10초 → 20초 → … 최대 5분 간격으로 다시 시도하고, OUTAGE_NOTE_S 넘게
+        안 되면 #봇-상태에 한 번 알림. 인터넷 문제가 아닌 오류(코드 오류)는 그대로 멈춤 → 업데이트 직후라면 원래 판으로 되돌아감."""
+        since, wait, told = now_ms(), START_RETRY_S, False
+        while True:
+            try:
+                await self.b.sync_time()
+            except Exception as e:
+                store.log("시간 맞추기 실패(계속함): %s" % e)
+            try:
+                await self.bootstrap()
+                return
+            except NET_ERRORS as e:
+                why = "%s %s" % (type(e).__name__, str(e)[:120])
+                store.log("시작 실패 — %d초 뒤 다시: %s" % (wait, why))
+            self.t = Tracker()                            # 반쯤 채운 장부는 버리고 다음에 처음부터
+            if not told and now_ms() - since >= OUTAGE_NOTE_S * 1000:
+                told = True
+                await self.d.put("status", "⚠️ 켜졌지만 바이낸스에 연결이 안 됨 (%s부터) · 폰의 인터넷(와이파이)을 확인해 주세요. "
+                                           "연결되면 바로 시작함\n이유: %s" % (fmt.kst_text(since), why))
+            await asyncio.sleep(wait)
+            wait = min(wait * 2, 300)
+
+    async def _tell_outage(self, n):
+        """돌다가 바이낸스 연결이 끊긴 채 OUTAGE_NOTE_S 넘게 못 붙으면 #봇-상태에 한 번 알림 (다시 붙으면 '🔌 … 다시 붙음')."""
+        if self.down_since and not getattr(self, "_outage_told", False) and n - self.down_since >= OUTAGE_NOTE_S * 1000:
+            self._outage_told = True
+            await self.d.put("status", "⚠️ 바이낸스 연결이 끊긴 뒤 다시 붙지 못하고 있음 (%s부터) · 폰의 인터넷(와이파이)을 확인해 주세요. "
+                                       "다시 붙으면 그사이 바뀐 것을 알림" % fmt.kst_text(self.down_since))
 
     # ------------------------------------------------------------------ 실시간
     async def stream_forever(self):
@@ -91,6 +126,7 @@ class App:
                 if self.down_since:
                     await self._after_gap(self.down_since)
                     self.down_since = None
+                self._outage_told = False
                 backoff = 1
                 keep = asyncio.create_task(self.keepalive())
                 while True:
@@ -118,6 +154,7 @@ class App:
                     self.ws = None
                 if self.down_since is None:
                     self.down_since = now_ms()
+            await self._tell_outage(now_ms())
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
 

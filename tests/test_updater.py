@@ -208,6 +208,59 @@ class AppUpdateTest(unittest.TestCase):
         self.assertEqual(self.sent(app), ["⚠️ 자동 업데이트: 새 판(ccccccc)이 켜지지 않아 원래 판으로 되돌림 · 지금 판 그대로 돌고 있음"])
         self.assertEqual(app.state["update_skip"], "c" * 40)              # 다음 날 같은 판을 또 시도하지 않음
 
+    def test_start_waits_for_binance_instead_of_dying(self):
+        app = self.make(self.real, positions=[])
+        fails = [OSError("바이낸스에 연결 안 됨"), OSError("바이낸스에 연결 안 됨")]
+        real_positions = app.b.positions
+
+        async def flaky():
+            if fails:
+                raise fails.pop(0)
+            return await real_positions()
+        app.b.positions = flaky
+
+        async def no_time():
+            raise OSError("시간 못 받음")
+        app.b.sync_time = no_time
+        old = (self.appmod.START_RETRY_S, self.appmod.OUTAGE_NOTE_S)
+        self.appmod.START_RETRY_S, self.appmod.OUTAGE_NOTE_S = 0, 0
+        try:
+            asyncio.run(app._start_until_ok())
+        finally:
+            self.appmod.START_RETRY_S, self.appmod.OUTAGE_NOTE_S = old
+        texts = self.sent(app)
+        self.assertEqual(len([t for t in texts if t.startswith("⚠️ 켜졌지만 바이낸스에 연결이 안 됨")]), 1)   # 알림은 한 번만
+        self.assertIn("이유: OSError 바이낸스에 연결 안 됨", texts[0])
+        self.assertTrue(texts[-1].startswith("🤖 시작함"))                      # 붙자마자 시작
+        self.assertTrue(os.path.exists(os.path.join(store.DATA_DIR, "started")))  # restart.sh 가 보는 표시
+
+    def test_code_error_at_start_is_not_retried(self):
+        app = self.make(self.real)
+
+        async def broken():
+            raise TypeError("코드 오류")
+        app.b.positions = broken
+
+        async def fine():
+            return None
+        app.b.sync_time = fine
+        with self.assertRaises(TypeError):                               # 멈춰야 업데이트 직후라면 되돌림이 됨
+            asyncio.run(app._start_until_ok())
+
+    def test_long_outage_told_once_until_reconnect(self):
+        app = self.make(self.real)
+        n = int(time.time() * 1000)
+        app.down_since = n - 3 * 60 * 1000
+        asyncio.run(app._tell_outage(n))
+        asyncio.run(app._tell_outage(n + 60_000))
+        texts = self.sent(app)
+        self.assertEqual(len(texts), 1)
+        self.assertTrue(texts[0].startswith("⚠️ 바이낸스 연결이 끊긴 뒤 다시 붙지 못하고 있음"))
+        app.down_since = n - 30_000                                      # 30초 끊긴 것은 알리지 않음
+        app._outage_told = False
+        asyncio.run(app._tell_outage(n))
+        self.assertEqual(self.sent(app), [])
+
     def test_short_restart_still_reports_position_change(self):
         app = self.make(self.real, positions=[])                         # 다시 켜는 사이 BTC 가 다 청산됨
         app.state = {"last_alive": int(time.time() * 1000) - 5000, "positions": {"BTCUSDT|BOTH": ["0.08", "81812.5"]},
