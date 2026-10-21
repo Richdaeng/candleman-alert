@@ -71,7 +71,7 @@ $154.90에 20주 · 약 $3,098어치(레버리지 포함) · 바로 체결(시�
 - **읽기 전용 키**: 주문 · 출금 함수는 일부러 만들지 않았고, `check` 명령이 키에 거래 · 출금 권한이 켜져 있으면 경고합니다.
 - **키는 폰에만**: `.env` 파일(나만 읽기 권한)에만 저장합니다. 저장소 · 기록 · 디스코드 글에는 넣지 않습니다.
 - **Termux 권한 0개**: 저장공간 · 연락처 · 문자 · 위치 권한이 필요 없습니다. 물어보면 주지 마세요.
-- **자동 업데이트 없음**: 코드는 내가 확인하고 직접 `termux/update.sh`(= `git pull` 뒤 다시 켜기)를 실행할 때만 바뀝니다.
+- **자동 업데이트는 `stable` 만**: 매일 05시에 시험을 통과한 판(`stable` 가지)만, 앞으로 이어질 때만, 폰에서 시험을 다시 통과해야 바꿉니다. 끌 수 있음(`AUTO_UPDATE=0`). 아래 '업데이트'.
 
 ## 폰에 설치 (갤럭시 · Termux 플레이 스토어 판)
 
@@ -103,7 +103,8 @@ python -m candleman check
 | `./termux/status.sh` | 돌고 있는지 · 최근 기록 |
 | `./termux/stop.sh` | 멈춤 |
 | `./termux/start.sh` | 시작 |
-| `./termux/update.sh` | 새 코드를 받고 다시 켬 (wake lock 은 그대로) |
+| `./termux/update.sh` | 지금 바로 업데이트 (보통은 매일 05시에 저절로) |
+| `bash termux/restart.sh` | 다시 켜기 (wake lock 은 그대로) |
 | `python -m candleman summary` | 지난 요약 구간을 지금 다시 올림 |
 | `python -m candleman demo` | 알림 글 모양 보기 (인터넷 안 씀) |
 | `python -m candleman bot` | /포지션 봇 토큰 넣기 · 바꾸기 (안 보이게) |
@@ -131,18 +132,29 @@ python -m candleman check
 
 ## 업데이트
 
-GitHub에서 바뀐 내용을 먼저 확인한 뒤:
+**저절로 (매일 05시, 한국 시간)**: 프로그램이 GitHub 의 `stable` 가지를 확인합니다.
+
+1. `stable` 이 바뀌었고 이 폰의 판에서 *앞으로* 이어지면(기록을 고쳐 쓴 판은 받지 않음) 새 판을 따로 꺼내 시험(`tests`)을 돌립니다.
+2. 시험을 다 통과하면 새 판으로 바꾸고 다시 켭니다. 끄기 전에 포지션을 저장하고, 켤 때 그사이 바뀐 포지션을 견줘 알립니다.
+3. 새 판이 1분 안에 꺼지면 원래 판으로 되돌립니다(`termux/restart.sh`).
+4. 결과는 `#봇-상태`에만: 🔄 새 판으로 바꿈 · ⚠️ 시험 실패(지금 판 그대로) · ⚠️ 되돌림. 새 판이 없으면 아무 글도 없습니다.
+
+고치는 중인 `main` 은 폰에 가지 않습니다. 시험을 통과한 판만 `stable` 로 올립니다(`git push origin main:stable`).
+끄려면 `.env` 에 `AUTO_UPDATE=0`, 시각을 바꾸려면 `UPDATE_HOUR=3` 처럼 넣고 다시 켭니다.
+
+**바로 하기**: 05시를 기다리지 않고 지금 받으려면
 
 ```
 ~/candleman-alert/termux/update.sh
 ```
 
-새 코드를 받고(`git pull`) 돌던 프로그램만 다시 켭니다. Termux 의 wake lock 은 건드리지 않습니다.
+같은 확인 · 시험을 거친 뒤 다시 켜고, 1분쯤 뒤 `#봇-상태`에 결과가 옵니다. Termux 의 wake lock 은 건드리지 않습니다.
 새 판에 서버 사람들에게 알릴 것이 있으면 처음 켤 때 `#실시간-매매` · `#일일-요약`에 안내 글이 한 번만 올라갑니다(`candleman/notices.py`).
-`update.sh` 가 아직 없는 옛 설치는 처음 한 번만:
+
+자동 업데이트가 없던 옛 설치는 처음 한 번만:
 
 ```
-cd ~/candleman-alert && git -c core.fileMode=false pull && bash termux/update.sh
+cd ~/candleman-alert && git -c core.fileMode=false pull && bash termux/restart.sh
 ```
 
 `-c core.fileMode=false` 는 설치 때 준 실행 권한(chmod) 차이 때문에 `git pull` 이 멈추지 않게 하는 것입니다.

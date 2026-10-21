@@ -6,6 +6,7 @@
   python -m candleman summary  지난 요약 구간의 요약을 지금 #일일-요약에 보냄
   python -m candleman hook symbols   웹후크 주소 하나만 넣거나 바꿈 (symbols = #종목설명 · trade · summary · status)
   python -m candleman bot      /포지션 명령 봇의 토큰을 넣거나 바꿈 (화면에 안 보이게)
+  python -m candleman update   GitHub 의 stable 판을 받아 시험해 보고 바꿈 (다시 켜기는 termux/update.sh 가 함)
 """
 import asyncio
 import sys
@@ -168,9 +169,38 @@ def _set_bot_token():
     return 0
 
 
+def _update():
+    """stable 판을 받아 따로 시험해 보고, 통과하면 바꿈. 다시 켜는 것은 termux/update.sh 가 함."""
+    from . import updater
+    status, old, new, detail = updater.check()
+    if status == "same":
+        print("이미 최신 판이에요 (%s)." % (old or "?")[:7])
+        return 0
+    if status == "error":
+        print("⚠️ 새 판을 확인하지 못했어요: %s" % detail)
+        return 1
+    if status == "diverged":
+        print("⚠️ GitHub 의 판(%s)이 이 폰의 판(%s)에서 이어지지 않아 받지 않았어요." % (new[:7], old[:7]))
+        return 1
+    print("새 판 %s → %s · 시험 중…" % (old[:7], new[:7]))
+    ok, tail = updater.test(new)
+    if not ok:
+        print("⚠️ 새 판 시험 실패 — 바꾸지 않았어요 (%s)" % tail)
+        return 1
+    ok, err = updater.switch(new)
+    if not ok:
+        print("⚠️ 바꾸지 못했어요: %s" % err)
+        return 1
+    updater.mark_done(old, new)
+    print("✅ 시험 통과 · 새 판으로 바꿈 (%s)" % tail)
+    return 0
+
+
 def main(argv):
     _console_utf8()
     cmd = argv[1] if len(argv) > 1 else "run"
+    if cmd == "update":
+        return _update()
     if cmd == "demo":
         _demo()
         return 0

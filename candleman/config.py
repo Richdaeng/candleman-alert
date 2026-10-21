@@ -44,13 +44,20 @@ def load(path=ENV_PATH):
     for name, url in hooks.items():
         if not url.startswith(WEBHOOK_PREFIXES):
             raise ConfigError("%s 웹후크 주소가 디스코드 주소가 아니에요 (https://discord.com/api/webhooks/ 로 시작해야 함)" % name)
-    try:
-        hour = int(e.get("SUMMARY_HOUR", "22"))
-    except ValueError:
-        raise ConfigError("SUMMARY_HOUR 는 0 ~ 23 숫자여야 해요")
-    if not 0 <= hour <= 23:
-        raise ConfigError("SUMMARY_HOUR 는 0 ~ 23 숫자여야 해요")
+    hour = _hour(e, "SUMMARY_HOUR", "22")
     os.makedirs(DATA_DIR, exist_ok=True)
     return {"key": e["BINANCE_API_KEY"], "secret": e["BINANCE_API_SECRET"], "hooks": hooks, "summary_hour": hour,
             "bot_token": e.get("DISCORD_BOT_TOKEN") or None,              # 있으면 /포지션 명령 봇을 켬
-            "command_channel": e.get("DISCORD_COMMAND_CHANNEL") or "잡담방"}
+            "command_channel": e.get("DISCORD_COMMAND_CHANNEL") or "잡담방",
+            "auto_update": e.get("AUTO_UPDATE", "1").strip() != "0",      # 매일 stable 판 확인 (0 이면 끔)
+            "update_hour": _hour(e, "UPDATE_HOUR", "5")}
+
+
+def _hour(e, key, default):
+    try:
+        h = int(e.get(key, default))
+    except ValueError:
+        raise ConfigError("%s 는 0 ~ 23 숫자여야 해요" % key)
+    if not 0 <= h <= 23:
+        raise ConfigError("%s 는 0 ~ 23 숫자여야 해요" % key)
+    return h

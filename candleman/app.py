@@ -1,10 +1,12 @@
 """프로그램 본체: 바이낸스 실시간 연결 → 장부 → 디스코드. 끊기면 다시 붙고, 그사이 바뀐 포지션은 조회로 채웁니다."""
 import asyncio
 import json
+import os
+import signal
 import time
 from datetime import datetime, timezone
 
-from . import fmt, names, notices, store, summary
+from . import fmt, names, notices, store, summary, updater
 from .binance import WS_PRIVATE, Binance, BinanceError
 from .discord import Discord
 from .fmt import dec
@@ -36,6 +38,10 @@ class App:
 
     # ------------------------------------------------------------------ 시작
     async def run(self):
+        try:                                              # stop.sh · 업데이트가 끄라고 하면 포지션을 저장하고 끝남
+            asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, lambda: asyncio.ensure_future(self._shutdown()))
+        except (NotImplementedError, AttributeError, RuntimeError, ValueError):
+            pass                                          # 윈도에서 시험할 때
         asyncio.create_task(self.d.worker())
         try:
             await self.b.sync_time()
@@ -59,13 +65,15 @@ class App:
         self.t.load_orders(orders, algos)
         n = now_ms()
         line = "🤖 시작함 · 포지션 %d개 · 미체결 주문 %d개 · 조건부 주문 %d개" % (len(pos), len(orders), len(algos))
-        if last_alive and n - last_alive > GAP_NOTE_S * 1000:
-            self._add_gap(last_alive, n)
-            line += " · 꺼져 있던 시간 %s ~ %s" % (fmt.kst_text(last_alive), fmt.kst_text(n))
+        if last_alive:                                    # 다시 켜는 몇 초 사이의 체결도 놓치지 않게 늘 견줌
             changes = self._diff_positions(prev, pos)
+            if n - last_alive > GAP_NOTE_S * 1000:
+                self._add_gap(last_alive, n)
+                line += " · 꺼져 있던 시간 %s ~ %s" % (fmt.kst_text(last_alive), fmt.kst_text(n))
             if changes:
                 await self._post_gap_changes(last_alive, n, changes)
         await self.d.put("status", line)
+        await self._report_update()
         await self._announce(n)
         if "last_summary_end" not in self.state:          # 처음 켠 날은 지난 구간 요약을 건너뜀
             self.state["last_summary_end"] = summary.window_for(n, self.hour)[1]
@@ -189,8 +197,15 @@ class App:
     async def scheduler(self):
         while True:
             await asyncio.sleep(20)
+            n = now_ms()
             try:
-                n = now_ms()
+                if self._update_due(n):
+                    self.state["update_checked"] = fmt.kst(n).strftime("%Y-%m-%d")
+                    store.save_state(self.state)
+                    await self._auto_update()
+            except Exception as e:
+                store.log("업데이트 오류: %s" % e)
+            try:
                 start, end = summary.window_for(n, self.hour)
                 if int(self.state.get("last_summary_end") or 0) < end and n - end < LATE_SUMMARY_S * 1000:
                     await self.post_summary(start, end)
@@ -233,6 +248,73 @@ class App:
         for r in recs:
             if r.get("kind") == "fill" and r.get("effect") in ("open", "flip"):
                 await self._introduce(r.get("symbol", ""), r.get("t"))
+
+    # ------------------------------------------------------------------ 업데이트 · 끄기
+    def _update_due(self, n):
+        """자동 업데이트를 볼 때인지: 켜 둔 경우 · 정해 둔 시각(기본 05시)에 · 그날 아직 안 봤으면."""
+        cfg = getattr(self, "cfg", None) or {}
+        if not cfg.get("auto_update", True):
+            return False
+        t = fmt.kst(n)
+        return t.hour == cfg.get("update_hour", 5) and self.state.get("update_checked") != t.strftime("%Y-%m-%d")
+
+    async def _auto_update(self):
+        """stable 에 새 판이 있으면 따로 시험해 보고, 통과하면 바꿔서 다시 켬. 결과는 #봇-상태에만."""
+        status, old, new, detail = await asyncio.to_thread(updater.check)
+        if status == "same":
+            store.log("업데이트 확인: 새 판 없음")
+            return
+        if status == "error":
+            store.log("업데이트 확인 실패: %s" % detail)
+            return
+        if self.state.get("update_skip") == new:          # 이미 안 받기로 한 판
+            return
+        if status == "diverged":
+            self.state["update_skip"] = new
+            store.save_state(self.state)
+            await self.d.put("status", "⚠️ 자동 업데이트 안 함: GitHub 의 새 판(%s)이 지금 판(%s)에서 이어지지 않음. 직접 확인 필요."
+                             % (new[:7], old[:7]))
+            return
+        ok, tail = await asyncio.to_thread(updater.test, new)
+        if not ok:
+            self.state["update_skip"] = new
+            store.save_state(self.state)
+            await self.d.put("status", "⚠️ 자동 업데이트 안 함: 새 판(%s) 시험 실패 · 지금 판 그대로 (%s)" % (new[:7], tail))
+            return
+        ok, err = await asyncio.to_thread(updater.switch, new)
+        if not ok:
+            await self.d.put("status", "⚠️ 자동 업데이트 안 함: 새 판으로 바꾸지 못함 (%s)" % err)
+            return
+        updater.mark_done(old, new)
+        store.log("새 판으로 바꿈: %s → %s · 다시 켬" % (old[:7], new[:7]))
+        self._snapshot()
+        try:
+            await asyncio.wait_for(self.d.q.join(), 10)   # 보내던 글을 마저 보낸 뒤
+        except asyncio.TimeoutError:
+            pass
+        updater.restart_detached(old)                     # 이 프로그램은 스크립트가 끄고 새 판을 켬
+
+    async def _report_update(self):
+        """업데이트 뒤 처음 켜졌을 때 결과를 #봇-상태에 알림 (바꿈 · 되돌림)."""
+        done, failed = updater.take_notes()
+        if failed:
+            self.state["update_skip"] = failed            # 같은 판을 다음 날 또 시도하지 않게
+            store.save_state(self.state)
+            await self.d.put("status", "⚠️ 자동 업데이트: 새 판(%s)이 켜지지 않아 원래 판으로 되돌림 · 지금 판 그대로 돌고 있음" % failed[:7])
+        elif done:
+            old, new = str(done.get("from") or "?"), str(done.get("to") or "?")
+            subjects = await asyncio.to_thread(updater.log_between, old, new)
+            await self.d.put("status", "\n".join(["🔄 새 판으로 바꿈 · %s → %s" % (old[:7], new[:7])] + ["· " + s for s in subjects]))
+
+    async def _shutdown(self):
+        """끄라는 신호(stop.sh · 업데이트)를 받으면: 지금 포지션을 저장하고, 보내던 글을 마저 보낸 뒤(최대 5초) 끝냄."""
+        try:
+            self._snapshot()
+            await asyncio.wait_for(self.d.q.join(), 5)
+        except Exception:
+            pass
+        store.log("멈춤 (끄라는 신호)")
+        os._exit(0)
 
     async def _announce(self, n):
         """새 판을 처음 켰을 때 안내 글(notices.py)을 정해 둔 채널에 한 번만 올림."""
