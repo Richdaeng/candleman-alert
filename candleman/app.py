@@ -21,6 +21,8 @@ LATE_SUMMARY_S = 3 * 3600      # 요약 시각을 놓쳤으면 이만큼 안에�
 START_RETRY_S = 10             # 켤 때 바이낸스에 못 붙으면 이만큼 뒤 다시 (두 배씩 늘려 최대 5분)
 OUTAGE_NOTE_S = 2 * 60         # 이보다 오래 바이낸스에 못 붙으면 #봇-상태에 한 번 알림
 NET_ERRORS = (OSError, asyncio.TimeoutError, BinanceError, ValueError)   # 인터넷 · 거래소 쪽 문제 (코드 오류는 아님)
+POS_POST_DELAY_S = 3           # 체결 뒤 이만큼 조용하면 #현재포지션에 새로 올림 (나눠서 체결돼도 한 번)
+POS_CHECK_S = 10 * 60          # 체결 소식을 놓쳤을 때를 대비해 이만큼마다 포지션을 한 번 견줌
 
 
 def now_ms():
@@ -39,6 +41,8 @@ class App:
         self.ws = None
         self._pos_cache = None
         self._outage_told = False
+        self._pos_due = None                 # 이 시각(ms)이 지나면 #현재포지션을 견줘 봄
+        self._pos_posting = False
 
     # ------------------------------------------------------------------ 시작
     async def run(self):
@@ -78,6 +82,7 @@ class App:
         if "last_summary_end" not in self.state:          # 처음 켠 날은 지난 구간 요약을 건너뜀
             self.state["last_summary_end"] = summary.window_for(n, self.hour)[1]
         self._snapshot()
+        self._pos_due = n                                 # 꺼져 있던 사이 바뀌었으면 #현재포지션도 새로
         try:                                              # 시작을 마쳤다는 표시 (termux/restart.sh 가 봄)
             with open(os.path.join(store.DATA_DIR, "started"), "w", encoding="utf-8") as f:
                 f.write(str(n))
@@ -171,6 +176,7 @@ class App:
 
     async def _after_gap(self, since):
         n = now_ms()
+        self._pos_due = n                                 # 끊긴 사이 바뀌었으면 #현재포지션도 새로 (같으면 안 올림)
         if n - since < GAP_NOTE_S * 1000:
             return
         self._add_gap(since, n)
@@ -230,6 +236,11 @@ class App:
             i += 1
             if i % 60 == 0:
                 self._snapshot()
+            if i % POS_CHECK_S == 0 and not self._pos_due:
+                self._pos_due = now_ms()
+            if self._pos_due and now_ms() >= self._pos_due and not self._pos_posting:
+                self._pos_due = None
+                asyncio.create_task(self._post_positions_if_changed())
 
     async def scheduler(self):
         while True:
@@ -283,8 +294,39 @@ class App:
             await self.d.put(m.channel, m.text)
         store.append(recs)
         for r in recs:
+            if r.get("kind") == "fill":                       # 포지션이 바뀜 → /포지션은 새 값으로, #현재포지션은 잠시 뒤 새 글
+                self._pos_cache = None
+                self._pos_due = now_ms() + POS_POST_DELAY_S * 1000
             if r.get("kind") == "fill" and r.get("effect") in ("open", "flip"):
                 await self._introduce(r.get("symbol", ""), r.get("t"))
+
+    async def _post_positions_if_changed(self):
+        """#현재포지션: 종목 · 방향 · 수량이 지난번 글과 다르면 지금 포지션 카드(/포지션과 같은 모양)를 새 글로 올림."""
+        if not self.d.has("positions") or getattr(self, "_pos_posting", False):
+            return
+        self._pos_posting = True
+        try:
+            positions = await self.b.positions()
+            sig = sorted("%s|%s|%s" % (r.get("symbol"), r.get("positionSide") or "BOTH", fmt.plain(r.get("positionAmt")))
+                         for r in positions)
+            if sig == self.state.get("positions_posted"):
+                return
+            try:
+                equity = (await self.b.account()).get("totalMarginBalance")
+            except Exception as e:
+                store.log("증거금 조회 실패: %s" % e)
+                equity = None
+            now = time.time()
+            self._pos_cache = (now, positions, equity)       # /포지션도 같은 값을 씀
+            msg = summary.positions_message(positions, equity, fmt.kst_text(int(now * 1000)))
+            await self.d.put("positions", msg["content"], msg["embeds"])
+            self.state["positions_posted"] = sig
+            store.save_state(self.state)
+        except NET_ERRORS as e:
+            store.log("현재 포지션 조회 실패 — 1분 뒤 다시: %s" % e)
+            self._pos_due = now_ms() + 60_000
+        finally:
+            self._pos_posting = False
 
     # ------------------------------------------------------------------ 업데이트 · 끄기
     def _update_due(self, n):

@@ -61,6 +61,10 @@ $154.90에 20주 · 약 $3,098어치(레버리지 포함) · 바로 체결(시�
 `#종목설명` (선택): 처음 진입한 종목을 한 번씩 소개합니다(`candleman/names.py` 의 설명 · 없으면 바이낸스 분류로 한 줄 + `#봇-상태`에 '설명 추가 필요').
 `DISCORD_WEBHOOK_SYMBOLS` 를 넣었을 때만 켜지고, 이미 공지에 있는 BTC · ETH · SOL · EWY · SKHY 는 다시 소개하지 않습니다.
 
+`#현재포지션` (선택): 포지션(종목 · 방향 · 수량)이 바뀔 때마다 지금 포지션을 `/포지션`과 같은 카드로 새 글로 올립니다.
+체결이 나뉘어 들어와도 3초 조용해진 뒤 한 번만, 지난 글과 같으면 올리지 않습니다(다시 켤 때 · 끊겼다 붙을 때 · 10분마다 한 번 견줌).
+`DISCORD_WEBHOOK_POSITIONS` 를 넣었을 때만 켜집니다(`python -m candleman hook positions`).
+
 글쓴이 이름 · 사진은 프로그램이 정하지 않고 디스코드의 웹후크 설정을 따릅니다(채널 설정 → 연동 → 웹후크에서 바꾸면 바로 반영).
 
 ## 안전하게 만든 점
@@ -108,7 +112,7 @@ python -m candleman check
 | `python -m candleman summary` | 지난 요약 구간을 지금 다시 올림 |
 | `python -m candleman demo` | 알림 글 모양 보기 (인터넷 안 씀) |
 | `python -m candleman bot` | /포지션 봇 토큰 넣기 · 바꾸기 (안 보이게) |
-| `python -m candleman hook symbols` | 웹후크 주소 하나만 넣거나 바꾸기 (`symbols` · `trade` · `summary` · `status`) — 바꾼 뒤 stop · start |
+| `python -m candleman hook symbols` | 웹후크 주소 하나만 넣거나 바꾸기 (`symbols` · `positions` · `trade` · `summary` · `status`) — 바꾼 뒤 `bash termux/restart.sh` |
 
 ## /포지션 명령 봇 (선택)
 

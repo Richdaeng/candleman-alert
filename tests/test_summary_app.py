@@ -212,6 +212,89 @@ class AnnounceTest(unittest.TestCase):
         self.assertEqual(self.queued(late), [])
 
 
+class PositionsChannelTest(unittest.TestCase):
+    """#현재포지션 — 종목 · 방향 · 수량이 바뀔 때만 지금 포지션 카드를 새 글로."""
+
+    def setUp(self):
+        from candleman import store
+        tmp = tempfile.mkdtemp()
+        self.store = store
+        self.old = (store.DATA_DIR, store.STATE, store.JOURNAL, store.LOG)
+        store.DATA_DIR = tmp
+        store.STATE, store.JOURNAL, store.LOG = (os.path.join(tmp, n) for n in ("state.json", "journal.jsonl", "app.log"))
+
+    def tearDown(self):
+        self.store.DATA_DIR, self.store.STATE, self.store.JOURNAL, self.store.LOG = self.old
+
+    def make(self, urls=None):
+        from candleman.app import App
+        from candleman.discord import Discord
+
+        class FB:
+            def __init__(self):
+                self.asked = 0
+                self.pos = [{"symbol": "EWYUSDT", "positionAmt": "20", "entryPrice": "152.83045678", "markPrice": "155",
+                             "notional": "3100", "unRealizedProfit": "12.5", "isolatedMargin": "0", "positionSide": "BOTH"}]
+
+            async def positions(self):
+                self.asked += 1
+                return [dict(p) for p in self.pos]
+
+            async def account(self):
+                return {"totalMarginBalance": "3875"}
+        app = App.__new__(App)
+        app.b, app.state = FB(), {}
+        app.d = Discord(urls or {"trade": "u1", "summary": "u2", "status": "u3", "positions": "u5"})
+        return app
+
+    def posted(self, app):
+        out = []
+        while not app.d.q.empty():
+            ch, text, embeds = app.d.q.get_nowait()
+            if ch == "positions":
+                out.append((text, embeds))
+        return out
+
+    def test_posts_only_when_positions_change(self):
+        app = self.make()
+        asyncio.run(app._post_positions_if_changed())
+        (text, embeds), = self.posted(app)
+        self.assertTrue(text.startswith("📌 **운영자 포지션** · "))
+        self.assertEqual(embeds[0]["title"], "🟢 한국 주식 ETF(EWY) · 롱")
+        self.assertIn("평균 가격 **$152.83**", embeds[0]["description"])
+        self.assertIn("실제 레버리지 **0.8배**", embeds[0]["description"])
+        app.b.pos[0].update(markPrice="160", unRealizedProfit="140")           # 가격 · 손익만 바뀐 것은
+        asyncio.run(app._post_positions_if_changed())
+        self.assertEqual(self.posted(app), [])                                   # 다시 올리지 않음
+        app.b.pos[0]["positionAmt"] = "30"                                       # 수량이 바뀌면 새 글
+        asyncio.run(app._post_positions_if_changed())
+        (_, embeds), = self.posted(app)
+        self.assertIn("수량 **30주**", embeds[0]["description"])
+        app.b.pos = []                                                           # 다 정리하면 '없음' 글
+        asyncio.run(app._post_positions_if_changed())
+        (text, embeds), = self.posted(app)
+        self.assertTrue(text.startswith("📌 운영자는 지금 들고 있는 포지션이 없음"))
+        self.assertEqual(embeds, [])
+
+    def test_no_repost_after_restart_when_unchanged(self):
+        app = self.make()
+        asyncio.run(app._post_positions_if_changed())
+        self.assertEqual(len(self.posted(app)), 1)
+        again = self.make()
+        again.state = self.store.load_state()                                    # 다시 켠 프로그램
+        asyncio.run(again._post_positions_if_changed())
+        self.assertEqual(self.posted(again), [])
+
+    def test_off_without_webhook_and_fill_schedules_check(self):
+        app = self.make({"trade": "u1", "summary": "u2", "status": "u3"})
+        asyncio.run(app._post_positions_if_changed())
+        self.assertEqual(app.b.asked, 0)                                         # 웹후크가 없으면 바이낸스에 묻지도 않음
+        app._pos_cache, app._pos_due = ("옛 값",), None
+        asyncio.run(app.emit([], [{"kind": "fill", "t": 1, "effect": "add", "symbol": "EWYUSDT"}]))
+        self.assertIsNone(app._pos_cache)                                        # /포지션도 새 값으로
+        self.assertIsNotNone(app._pos_due)                                       # 잠시 뒤 #현재포지션 확인
+
+
 class FmtTest(unittest.TestCase):
     def test_price2_cuts_long_decimals(self):
         self.assertEqual(fmt.price2("152.83045678"), "$152.83")
