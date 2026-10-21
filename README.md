@@ -128,8 +128,10 @@ python -m candleman check
 GitHub에서 바뀐 내용을 먼저 확인한 뒤:
 
 ```
-cd ~/candleman-alert && ./termux/stop.sh && git pull && ./termux/start.sh
+cd ~/candleman-alert && ./termux/stop.sh && git -c core.fileMode=false pull && ./termux/start.sh
 ```
+
+`-c core.fileMode=false` 는 설치 때 준 실행 권한(chmod) 차이 때문에 `git pull` 이 멈추지 않게 하는 것입니다.
 
 ## 알림이 안 올 때
 
