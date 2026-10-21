@@ -1,11 +1,12 @@
-"""디스코드 봇 — 정해 둔 채널(기본 #잡담방)의 /포지션 명령 하나에만 답합니다. DISCORD_BOT_TOKEN 이 있을 때만 켜짐.
+"""디스코드 봇 — 정해 둔 채널(기본 #잡담방)의 /포지션 · /주인장수익률 두 명령에만 답합니다. DISCORD_BOT_TOKEN 이 있을 때만 켜짐.
 
 웹후크는 보내기만 해서 명령을 받으려면 디스코드 게이트웨이에 붙어 있어야 합니다. 이것도 폰에서 '나가는' 연결이라
 밖에서 폰으로 들어오는 문은 생기지 않습니다. 받은 것에서는 명령 이름 · 채널 이름 · 부른 사람만 보고, 무엇도 실행하지 않습니다.
 봇에는 서버 권한을 하나도 주지 않습니다(명령에 답하는 데는 권한이 필요 없음).
 
-같은 사람이 5분 안에 10번 넘게 부르면 그 사람의 /포지션은 6시간 막습니다(서버 주인 한 사람만 예외 — 관리자 역할을
-받은 사람도 막힘). 이 규칙은 공지에 적지 않고, 막힌 사람에게는 '지금은 쓸 수 없음'만 보이며, 누가 막혔는지는 #봇-상태에만 알립니다.
+같은 사람이 5분 안에 10번 넘게 부르면(두 명령을 합쳐 셈) 그 사람의 명령은 6시간 막습니다(서버 주인 한 사람만 예외 — 관리자
+역할을 받은 사람도 막힘). 이 규칙은 공지에 적지 않고, 막힌 사람에게는 '지금은 쓸 수 없음'만 보이며, 누가 막혔는지는 #봇-상태에만 알립니다.
+/주인장수익률은 시작 금액(START_USD)이 있을 때만 등록합니다.
 """
 import asyncio
 import json
@@ -22,6 +23,7 @@ GATEWAY = "wss://gateway.discord.gg/?v=10&encoding=json"
 API = "https://discord.com/api/v10"
 USER_AGENT = "DiscordBot (https://github.com/Richdaeng/candleman-alert, 1.0)"
 COMMAND = {"name": "포지션", "description": "운영자가 지금 들고 있는 포지션 보기", "type": 1}   # 서버 전용 명령이라 contexts 는 안 씀
+RETURN_COMMAND = {"name": "주인장수익률", "description": "운영자가 시작한 금액 대비 지금 자산과 수익률 보기", "type": 1}
 WINDOW_S, LIMIT, BLOCK_S = 5 * 60, 10, 6 * 3600
 EPHEMERAL = 1 << 6                     # 부른 사람에게만 보이는 답
 FATAL_CLOSE = {4004: "봇 토큰이 맞지 않음", 4013: "intents 값이 잘못됨", 4014: "허용되지 않은 intents"}
@@ -69,6 +71,7 @@ class Bot:
         self.ws = None
         self.guard = RateGuard((app.state or {}).get("cmd_blocked"))
         self.owners = {}                     # 서버 번호 → 서버 주인 번호 (제한에서 빠지는 단 한 사람 · None 이면 알아보는 중)
+        self.commands = [COMMAND] + ([RETURN_COMMAND] if getattr(app, "start_usd", None) else [])
 
     def __repr__(self):                      # 실수로 찍혀도 토큰이 나오지 않게
         return "Bot(channel=%r)" % self.channel_name
@@ -115,7 +118,7 @@ class Bot:
             except WSClosed as e:
                 if e.code in FATAL_CLOSE:
                     store.log("봇 멈춤: %s" % FATAL_CLOSE[e.code])
-                    await self.app.d.put("status", "⛔ /포지션 봇을 멈춤: %s. python -m candleman bot 으로 토큰을 다시 넣기." % FATAL_CLOSE[e.code])
+                    await self.app.d.put("status", "⛔ 명령 봇을 멈춤: %s. python -m candleman bot 으로 토큰을 다시 넣기." % FATAL_CLOSE[e.code])
                     return
                 store.log("봇 연결 끊김: %s" % e.code)
             except Exception as e:
@@ -177,19 +180,19 @@ class Bot:
     async def _on_ready(self, d):
         self.app_id = (d.get("application") or {}).get("id")
         done = self.app.state.setdefault("cmd_registered", {})
-        sig = json.dumps(COMMAND, ensure_ascii=False, sort_keys=True)
+        sig = json.dumps(self.commands, ensure_ascii=False, sort_keys=True)
         for g in d.get("guilds", []):
             gid = g.get("id")
             if not gid:
                 continue
             await self._load_owner(gid)
-            if done.get(gid) == sig:                      # 같은 명령이 이미 등록돼 있으면 다시 하지 않음
+            if done.get(gid) == sig:                      # 같은 명령들이 이미 등록돼 있으면 다시 하지 않음 (바뀌면 통째로 다시)
                 continue
             try:
-                await self.rest("PUT", "/applications/%s/guilds/%s/commands" % (self.app_id, gid), [COMMAND])
+                await self.rest("PUT", "/applications/%s/guilds/%s/commands" % (self.app_id, gid), self.commands)
                 done[gid] = sig
                 store.save_state(self.app.state)
-                store.log("/포지션 명령 등록")
+                store.log("명령 등록: " + " · ".join("/" + c["name"] for c in self.commands))
             except Exception as e:
                 store.log("명령 등록 실패: %s" % e)
 
@@ -213,7 +216,8 @@ class Bot:
             store.log("명령 처리 오류: %s %s" % (type(e).__name__, str(e)[:160]))
 
     async def handle(self, d, now_s):
-        if d.get("type") != 2 or (d.get("data") or {}).get("name") != COMMAND["name"]:
+        name = (d.get("data") or {}).get("name")
+        if d.get("type") != 2 or name not in [c["name"] for c in self.commands]:
             return
         iid, tok = d.get("id"), d.get("token")
         member = d.get("member") or {}
@@ -221,7 +225,7 @@ class Bot:
         uid = str(user.get("id", ""))
         who = member.get("nick") or user.get("global_name") or user.get("username") or uid
         if (d.get("channel") or {}).get("name") != self.channel_name:
-            return await self._reply(iid, tok, "💬 /포지션은 #%s에서 쓸 수 있음." % self.channel_name, private=True)
+            return await self._reply(iid, tok, "💬 /%s은 #%s에서 쓸 수 있음." % (name, self.channel_name), private=True)
         gid = d.get("guild_id")
         if gid and gid not in self.owners:                # 시작할 때 못 알아냈으면 뒤에서 다시 (이번 답은 늦추지 않음)
             self.owners[gid] = None                       # 알아보는 중 (겹쳐 묻지 않게)
@@ -231,11 +235,16 @@ class Bot:
             if verdict == "just_blocked":
                 self.app.state["cmd_blocked"] = self.guard.blocked
                 store.save_state(self.app.state)
-                await self.app.d.put("status", "🚫 %s의 /포지션을 6시간 막음 (5분 안에 10번 넘게 부름)" % who)
+                await self.app.d.put("status", "🚫 %s의 명령(%s)을 6시간 막음 (5분 안에 10번 넘게 부름)"
+                                     % (who, " · ".join("/" + c["name"] for c in self.commands)))
             if verdict != "ok":
-                return await self._reply(iid, tok, "⏳ 지금은 /포지션을 쓸 수 없음. 나중에 다시 시도 바람.", private=True)
+                return await self._reply(iid, tok, "⏳ 지금은 /%s을 쓸 수 없음. 나중에 다시 시도 바람." % name, private=True)
         await self.rest("POST", "/interactions/%s/%s/callback" % (iid, tok), {"type": 5}, auth=False)   # '생각 중…' 표시
-        msg = await self.app.positions_message()
+        try:
+            msg = await (self.app.positions_message() if name == COMMAND["name"] else self.app.return_message())
+        except Exception as e:                            # 바이낸스가 안 받아도 '생각 중…'에 멈춰 있지 않게
+            store.log("/%s 답 실패: %s %s" % (name, type(e).__name__, str(e)[:160]))
+            msg = {"content": "⚠️ 지금은 바이낸스에서 값을 받지 못함. 잠시 뒤 다시 시도 바람.", "embeds": []}
         await self.rest("PATCH", "/webhooks/%s/%s/messages/@original" % (self.app_id, tok),
                         {"content": msg["content"][:2000], "embeds": msg.get("embeds", []), "allowed_mentions": {"parse": []}},
                         auth=False)

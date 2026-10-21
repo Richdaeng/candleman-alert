@@ -159,6 +159,16 @@ class Binance:
                 out[b.get("asset")] = q
         return out
 
+    async def funding_balances(self):
+        """펀딩 지갑 잔고 {자산: 수량(쓸 수 있는 것 + 묶인 것 + 얼린 것)} — 주인장 수익률의 지금 자산에 넣음 (POST 지만 조회만 함)."""
+        rows = await self._spot().call("POST", "/sapi/v1/asset/get-funding-asset", signed=True)
+        out = {}
+        for r in rows or []:
+            q = dec(r.get("free")) + dec(r.get("locked")) + dec(r.get("freeze"))
+            if q > 0:
+                out[r.get("asset")] = q
+        return out
+
     async def spot_open_orders(self):
         return await self._spot().call("GET", "/api/v3/openOrders", signed=True)
 

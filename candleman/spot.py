@@ -226,23 +226,30 @@ def how_text(otype):
     return "걸어 둔 주문 체결"
 
 
+def _dust(f, q):
+    """이 체결 기준으로 q 개가 없는 것과 같나 (0 이하 · 수수료 찌꺼기만 남음). 모르면(None) 아님."""
+    return q is not None and (q <= 0 or bool(f.usd and q * f.avg < DUST_USD))
+
+
+def sold_out(f, held_after):
+    """판 체결 뒤 그 코인을 다 정리했나 (⬜ 모두 매도 — 주인장 수익률을 붙이는 때)."""
+    return f.side == "SELL" and _dust(f, held_after)
+
+
 def fill_text(f, held_after, pnl):
     """체결 글. held_after = 체결 뒤 그 코인 보유량(모르면 None), pnl = 팔 때 손익(모르면 None)."""
     label = names.label(f.base)
     price = f.avg
     px, amt, worth = price_text(price, f.quote), names.amount(f.qty, f.base), worth_text(f.quote_qty, f.quote)
-
-    def dust(q):
-        return q is not None and (q <= 0 or (f.usd and q * price < DUST_USD))
     if f.side == "BUY":
         before = None if held_after is None else held_after - f.qty
-        if before is None or dust(before):
+        if before is None or _dust(f, before):
             title, line = "🟢 %s 현물 매수" % label, "%s에 %s · %s" % (px, amt, worth)
         else:
             title = "➕ %s 현물 추가 매수" % label
             line = "%s에 %s 더 · 모두 %s · %s" % (px, amt, names.amount(held_after, f.base), worth)
     else:
-        all_gone = dust(held_after)
+        all_gone = sold_out(f, held_after)
         title = ("⬜ %s 현물 모두 매도" if all_gone else "🟠 %s 현물 일부 매도" if held_after is not None else "🟠 %s 현물 매도") % label
         if pnl is not None:
             title += " · " + fmt.pnl(pnl)

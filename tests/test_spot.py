@@ -224,6 +224,35 @@ class FeedTest(unittest.TestCase):
         self.assertIsNotNone(self.app._pos_due)                                    # #현재포지션 새 글
         rec, = [r for r in store.read_journal(0, 10 ** 15) if r.get("kind") == "spot_fill"]   # 하루 요약이 쓰는 기록
         self.assertEqual((rec["pnl"], rec["fee_usd"], rec["usd"]), ("36.68", "3.32", True))
+        self.assertIsNone(getattr(self.app, "_ret_due", None))                    # 일부 매도라 수익률 글은 아님
+
+    def test_selling_everything_schedules_owner_return(self):
+        sent = []
+
+        class D2:
+            async def put(self, ch, text, embeds=None):
+                sent.append((ch, text))
+        self.app.d, self.app._pos_cache, self.app._pos_due, self.app._ret_due = D2(), None, None, None
+        self.app.start_usd = D("7800")
+        self.feed.t.load_balances({"BTC": D("0.00000004")})                       # 수수료 찌꺼기만 남음 = 모두 매도
+        f = fill("SELL", "0.1", "8300")
+        import candleman.spotfeed as sf
+        old, sf.SETTLE_S = sf.SETTLE_S, 0
+
+        async def go():
+            task = asyncio.ensure_future(self.feed._fill_worker())
+            await self.feed.fills.put(f)
+            for _ in range(500):
+                await asyncio.sleep(0.01)
+                if sent:
+                    break
+            task.cancel()
+        try:
+            asyncio.run(go())
+        finally:
+            sf.SETTLE_S = old
+        self.assertTrue(sent[0][1].startswith("⬜ 비트코인(BTC) 현물 모두 매도"))
+        self.assertIsNotNone(self.app._ret_due)                                    # 잠시 뒤 #실시간-매매에 주인장 수익률
 
 
 class SpotCardsTest(unittest.TestCase):

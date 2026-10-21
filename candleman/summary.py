@@ -107,6 +107,16 @@ def positions_message(positions, equity, when, spot=None):
     return {"content": head, "embeds": cards}
 
 
+def return_text(start, equity, when):
+    """주인장 수익률 글 — 포지션을 끝낼 때 #실시간-매매에 붙는 글과 /주인장수익률 답이 같은 글(10/21 댕이: "시작 7800달러,
+    현재 X달러, 수익률 n%"). 현재 = 선물 · 현물 · 펀딩 지갑을 합친 지금 자산. 폰 알림에 별표가 보여 굵은 글씨는 안 씀."""
+    start, equity = dec(start), dec(equity)
+    return "\n".join(["📊 주인장 수익률 · %s 기준" % when,
+                      "시작: %s" % fmt.usd(start),
+                      "현재: %s" % fmt.usd(equity),
+                      "수익률: %s (%s)" % (fmt.pct((equity - start) / start * 100), fmt.usd(equity - start, sign=True))])
+
+
 def spot_lines(rows):
     """현물 보유 줄 — '· 비트코인(BTC) 현물 0.06 BTC · 평균 매수가 $82,000.00 · 약 $4,980어치 · 미실현 +$60.00'."""
     out = []

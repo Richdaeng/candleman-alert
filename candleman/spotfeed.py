@@ -11,7 +11,7 @@ from decimal import Decimal
 from . import fmt, store
 from .binance import WS_API, BinanceError
 from .fmt import ZERO, dec
-from .spot import DUST_USD, SHOW_USD, CostBook, SpotTracker, fill_text
+from .spot import DUST_USD, SHOW_USD, CostBook, SpotTracker, fill_text, sold_out
 from .ws import WebSocket, WSClosed
 
 READ_IDLE_S = 5 * 60          # 서버 ping(20초마다)도 이만큼 없으면 죽은 연결로 보고 다시 붙음
@@ -127,7 +127,10 @@ class SpotFeed:
                         pnl = await self.sell_pnl(f)
                     except Exception as e:
                         store.log("현물 손익 계산 실패: %s %s" % (type(e).__name__, str(e)[:160]))
-                await self.app.d.put("trade", fill_text(f, self.t.balances.get(f.base), pnl))
+                held = self.t.balances.get(f.base)
+                await self.app.d.put("trade", fill_text(f, held, pnl))
+                if sold_out(f, held) and getattr(self.app, "start_usd", None):
+                    self.app._ret_due = now_ms() + 3000    # 다 팔았으면 잠시 뒤 #실시간-매매에 주인장 수익률
                 fee = None
                 if f.usd:
                     try:
@@ -137,7 +140,7 @@ class SpotFeed:
                 store.append([{"kind": "spot_fill", "t": f.t_ms, "oid": f.oid, "symbol": f.symbol, "side": f.side, "qty": str(f.qty),
                                "quote": str(f.quote_qty), "usd": f.usd, "pnl": None if pnl is None else str(pnl),
                                "fee_usd": None if fee is None else str(fee)}])         # 하루 요약이 이 기록으로 현물을 셈
-                self.app._pos_cache = None                 # /포지션도 새 값으로
+                self.app._pos_cache = self.app._ret_cache = None   # /포지션 · /주인장수익률도 새 값으로
                 self.app._pos_due = now_ms() + 3000        # #현재포지션 새 글
             except Exception as e:
                 store.log("현물 체결 글 오류: %s %s" % (type(e).__name__, str(e)[:160]))

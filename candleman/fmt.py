@@ -107,6 +107,12 @@ def pnl(d):
     return "%s %s" % (word, usd(v, sign=True))
 
 
+def pct(d):
+    """퍼센트: '+4.15%' · '−2.30%' · '0.00%' (소수 둘째 자리)."""
+    v = dec(d).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return ("+" if v > 0 else MINUS if v < 0 else "") + "{:,}".format(abs(v)) + "%"
+
+
 def side_hint(direction):
     """롱 · 숏을 처음 보는 사람을 위한 풀이."""
     return "오르면 이익" if direction > 0 else "내리면 이익"

@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from datetime import datetime
+from decimal import Decimal as D
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from candleman import fmt, summary  # noqa: E402
@@ -318,7 +319,84 @@ class PositionsChannelTest(unittest.TestCase):
         self.assertIsNotNone(app._pos_due)                                       # 잠시 뒤 #현재포지션 확인
 
 
+class ReturnTest(unittest.TestCase):
+    """주인장 수익률 — 시작 금액 대비 지금 자산(선물 + 현물 + 펀딩 지갑). 포지션을 끝낼 때 #실시간-매매에 한 번."""
+
+    def setUp(self):
+        from candleman import store
+        tmp = tempfile.mkdtemp()
+        self.store = store
+        self.old = (store.DATA_DIR, store.STATE, store.JOURNAL, store.LOG)
+        store.DATA_DIR = tmp
+        store.STATE, store.JOURNAL, store.LOG = (os.path.join(tmp, n) for n in ("state.json", "journal.jsonl", "app.log"))
+
+    def tearDown(self):
+        self.store.DATA_DIR, self.store.STATE, self.store.JOURNAL, self.store.LOG = self.old
+
+    def make(self, start=D("7800"), funding_fails=False):
+        from candleman.app import App
+        from candleman.binance import BinanceError
+
+        class FB:
+            async def account(self):
+                return {"totalMarginBalance": "5000"}
+
+            async def spot_balances(self):
+                return {"USDT": D("1000"), "BTC": D("0.01"), "LDUSDT": D("200"), "LDBTC": D("0.001"), "XYZ": D("5")}
+
+            async def funding_balances(self):
+                if funding_fails:
+                    raise ConnectionError("바이낸스에 연결하지 못함")
+                return {"USDT": D("50")}
+
+            async def spot_price(self, symbol):
+                if symbol != "BTCUSDT":
+                    raise BinanceError(400, -1121, "Invalid symbol.")
+                return "80000"
+        app = App.__new__(App)
+        app.b, app.d, app.state, app.start_usd = FB(), FakeDiscord(), {}, start
+        app._pos_cache = app._pos_due = app._ret_due = app._ret_cache = None
+        return app
+
+    def test_text(self):
+        self.assertEqual(summary.return_text(D("7800"), D("8123.454"), "10/21 20:00").split("\n"), [
+            "📊 주인장 수익률 · 10/21 20:00 기준", "시작: $7,800.00", "현재: $8,123.45", "수익률: +4.15% (+$323.45)"])
+        self.assertEqual(summary.return_text(D("7800"), D("7620.6"), "10/21 20:00").split("\n")[-1], "수익률: −2.30% (−$179.40)")
+        self.assertEqual(summary.return_text(D("7800"), D("7800"), "10/21 20:00").split("\n")[-1], "수익률: 0.00% ($0.00)")
+
+    def test_equity_counts_futures_spot_and_funding(self):
+        # 선물 5,000 + 현물 USDT 1,000 + BTC 0.01 × 80,000 + Earn LDUSDT 200 + LDBTC 0.001 × 80,000 + 펀딩 50 (XYZ 는 값을 못 매겨 뺌)
+        self.assertEqual(asyncio.run(self.make().equity_usd()), D("7130"))
+        self.assertEqual(asyncio.run(self.make(funding_fails=True).equity_usd()), D("7080"))   # 펀딩 지갑을 못 읽어도 계속
+
+    def test_close_posts_return_once_to_trade(self):
+        app = self.make()
+        asyncio.run(app.emit([], [{"kind": "fill", "t": 1, "effect": "add", "symbol": "EWYUSDT"}]))
+        self.assertIsNone(app._ret_due)                                          # 늘리기 · 줄이기는 아님
+        asyncio.run(app.emit([], [{"kind": "fill", "t": 2, "effect": "close", "symbol": "EWYUSDT"}]))
+        self.assertIsNotNone(app._ret_due)                                       # 다 정리 → 잠시 뒤 수익률
+        asyncio.run(app._post_return())
+        (ch, text), = app.d.sent
+        self.assertEqual(ch, "trade")
+        lines = text.split("\n")
+        self.assertTrue(lines[0].startswith("📊 주인장 수익률 · "))
+        self.assertEqual(lines[1:], ["시작: $7,800.00", "현재: $7,130.00", "수익률: −8.59% (−$670.00)"])
+
+    def test_off_without_start(self):
+        app = self.make(start=None)
+        asyncio.run(app.emit([], [{"kind": "fill", "t": 2, "effect": "close", "symbol": "EWYUSDT"}]))
+        self.assertIsNone(app._ret_due)
+        asyncio.run(app._post_return())
+        self.assertEqual(app.d.sent, [])
+
+
 class FmtTest(unittest.TestCase):
+    def test_pct(self):
+        self.assertEqual(fmt.pct("4.1499"), "+4.15%")
+        self.assertEqual(fmt.pct("-2.3"), "−2.30%")
+        self.assertEqual(fmt.pct("0"), "0.00%")
+        self.assertEqual(fmt.pct("1234.5"), "+1,234.50%")
+
     def test_price2_cuts_long_decimals(self):
         self.assertEqual(fmt.price2("152.83045678"), "$152.83")
         self.assertEqual(fmt.price2("82000"), "$82,000.00")

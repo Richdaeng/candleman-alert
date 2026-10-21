@@ -6,11 +6,12 @@ import signal
 import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from . import briefing, fmt, names, notices, store, summary, updater
 from .binance import WS_PRIVATE, Binance, BinanceError
 from .discord import Discord
-from .fmt import dec
+from .fmt import ZERO, dec
 from .spotfeed import SpotFeed
 from .tracker import Tracker, base_of
 from .ws import WebSocket, WSClosed
@@ -46,6 +47,10 @@ class App:
         self._outage_told = False
         self._pos_due = None                 # 이 시각(ms)이 지나면 #현재포지션을 견줘 봄
         self._pos_posting = False
+        self.start_usd = cfg.get("start_usd")   # 주인장 수익률의 시작 금액 (None 이면 수익률 글 · /주인장수익률 없음)
+        self._ret_due = None                 # 이 시각(ms)이 지나면 #실시간-매매에 주인장 수익률 (포지션을 끝낸 뒤)
+        self._ret_posting = False
+        self._ret_cache = None
         self.spot = SpotFeed(self) if cfg.get("spot", True) else None   # 현물 체결 알림 · 보유 (SPOT=0 이면 끔)
 
     # ------------------------------------------------------------------ 시작
@@ -249,6 +254,9 @@ class App:
             if self._pos_due and now_ms() >= self._pos_due and not self._pos_posting:
                 self._pos_due = None
                 asyncio.create_task(self._post_positions_if_changed())
+            if self._ret_due and now_ms() >= self._ret_due and not self._ret_posting:
+                self._ret_due = None
+                asyncio.create_task(self._post_return())
 
     async def scheduler(self):
         while True:
@@ -322,8 +330,10 @@ class App:
         store.append(recs)
         for r in recs:
             if r.get("kind") == "fill":                       # 포지션이 바뀜 → /포지션은 새 값으로, #현재포지션은 잠시 뒤 새 글
-                self._pos_cache = None
+                self._pos_cache = self._ret_cache = None
                 self._pos_due = now_ms() + POS_POST_DELAY_S * 1000
+            if r.get("kind") == "fill" and r.get("effect") in ("close", "flip") and getattr(self, "start_usd", None):
+                self._ret_due = now_ms() + POS_POST_DELAY_S * 1000   # 포지션을 끝냄 → 잠시 뒤 주인장 수익률
             if r.get("kind") == "fill" and r.get("effect") in ("open", "flip"):
                 await self._introduce(r.get("symbol", ""), r.get("t"))
 
@@ -357,6 +367,68 @@ class App:
             self._pos_due = now_ms() + 60_000
         finally:
             self._pos_posting = False
+
+    # ------------------------------------------------------------------ 주인장 수익률
+    async def equity_usd(self):
+        """지금 자산(달러) = 선물 증거금 합계(지갑 잔고 + 미실현 손익) + 현물 지갑 + 펀딩 지갑. 코인은 USDT 짝 시세로 매기고,
+        Earn 의 LD 자산(LDUSDT · LDBTC …)은 바탕 코인 값으로, 값을 못 매기는 것은 뺌. 펀딩 지갑을 못 읽으면 빼고 계속함."""
+        total = dec((await self.b.account()).get("totalMarginBalance"))
+        total += await self._wallet_usd(await self.b.spot_balances())
+        try:
+            total += await self._wallet_usd(await self.b.funding_balances())
+        except NET_ERRORS as e:
+            store.log("펀딩 지갑 조회 실패(자산에서 뺌): %s" % e)
+        return total
+
+    async def _wallet_usd(self, balances):
+        total = ZERO
+        for asset, qty in balances.items():
+            p = await self._usd_price(asset)
+            if p is None and asset.startswith("LD") and len(asset) > 2:
+                p = await self._usd_price(asset[2:])
+            if p:
+                total += qty * p
+        return total
+
+    async def _usd_price(self, asset):
+        """USDT 로 매긴 값. USDT 짝이 없으면 None (한 번 없던 것은 다시 묻지 않음)."""
+        if asset == "USDT":
+            return Decimal(1)
+        no_market = getattr(self, "_no_market", None)
+        if no_market is None:
+            no_market = self._no_market = set()
+        if asset in no_market:
+            return None
+        try:
+            return dec(await self.b.spot_price(asset + "USDT")) or None
+        except BinanceError as e:
+            if e.status == 400:
+                no_market.add(asset)
+                return None
+            raise
+
+    async def return_message(self):
+        """/주인장수익률 답 = 포지션을 끝낼 때 #실시간-매매에 붙는 글. 바이낸스에는 30초에 한 번까지만 물음."""
+        now = time.time()
+        cache = getattr(self, "_ret_cache", None)
+        if not cache or now - cache[0] > 30:
+            cache = self._ret_cache = (now, await self.equity_usd())
+        return {"content": summary.return_text(self.start_usd, cache[1], fmt.kst_text(int(cache[0] * 1000))), "embeds": []}
+
+    async def _post_return(self):
+        """선물 포지션을 끝내거나(정리 · 방향 바꿈) 현물을 모두 판 뒤 #실시간-매매에 주인장 수익률을 한 번."""
+        if getattr(self, "_ret_posting", False) or not getattr(self, "start_usd", None):
+            return
+        self._ret_posting = True
+        try:
+            self._ret_cache = None                        # 정리한 뒤의 값으로
+            msg = await self.return_message()
+            await self.d.put("trade", msg["content"])
+        except NET_ERRORS as e:
+            store.log("수익률 조회 실패 — 1분 뒤 다시: %s" % e)
+            self._ret_due = now_ms() + 60_000
+        finally:
+            self._ret_posting = False
 
     # ------------------------------------------------------------------ 아침 경제 브리핑
     def _fetch_brief(self):

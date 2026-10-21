@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from candleman import store  # noqa: E402
-from candleman.bot import BLOCK_S, COMMAND, Bot, RateGuard  # noqa: E402
+from candleman.bot import BLOCK_S, COMMAND, RETURN_COMMAND, Bot, RateGuard  # noqa: E402
 
 
 class RateGuardTest(unittest.TestCase):
@@ -58,13 +58,16 @@ def interaction(i, channel="잡담방", uid="42", perms="0"):
             "guild_id": "g1", "member": {"permissions": perms, "nick": "태규", "user": {"id": uid, "username": "taegyu"}}}
 
 
-class BotTest(unittest.TestCase):
+class BotCase(unittest.TestCase):
+    """가짜 앱을 단 봇 (시험 함수는 아래 두 반에 있음)."""
+    App = FakeApp
+
     def setUp(self):
         tmp = tempfile.mkdtemp()
         self.old = (store.DATA_DIR, store.STATE, store.JOURNAL, store.LOG)
         store.DATA_DIR = tmp
         store.STATE, store.JOURNAL, store.LOG = (os.path.join(tmp, n) for n in ("state.json", "journal.jsonl", "app.log"))
-        self.app = FakeApp()
+        self.app = self.App()
         self.bot = Bot("x.y.z", self.app)
         self.bot.app_id = "app1"
         self.bot.owners = {"g1": OWNER}
@@ -84,6 +87,8 @@ class BotTest(unittest.TestCase):
         asyncio.run(self.bot.handle(d, now))
         return list(self.calls)
 
+
+class BotTest(BotCase):
     def test_answers_in_chat_room_for_everyone(self):
         calls = self.run_one(interaction(1))
         self.assertEqual([(m, p) for m, p, _, _ in calls], [("POST", "/interactions/i1/tok1/callback"), ("PATCH", "/webhooks/app1/tok1/messages/@original")])
@@ -107,7 +112,7 @@ class BotTest(unittest.TestCase):
         self.assertEqual(calls[0][2]["data"]["flags"], 64)
         self.assertEqual(calls[0][2]["data"]["content"], "⏳ 지금은 /포지션을 쓸 수 없음. 나중에 다시 시도 바람.")
         self.assertNotIn("6시간", calls[0][2]["data"]["content"])        # 막힌 사람에게 규칙을 알리지 않음
-        self.assertEqual(self.app.d.sent, [("status", "🚫 태규의 /포지션을 6시간 막음 (5분 안에 10번 넘게 부름)")])
+        self.assertEqual(self.app.d.sent, [("status", "🚫 태규의 명령(/포지션)을 6시간 막음 (5분 안에 10번 넘게 부름)")])
         self.assertIn("42", self.app.state["cmd_blocked"])
         self.run_one(interaction(11), now=1020.0)
         self.assertEqual(len(self.app.d.sent), 1)                        # 막힌 뒤에는 알림을 또 보내지 않음
@@ -150,6 +155,59 @@ class BotTest(unittest.TestCase):
         d = interaction(1)
         d["data"]["name"] = "다른명령"
         self.assertEqual(self.run_one(d), [])
+        d["data"]["name"] = "주인장수익률"                                  # 시작 금액이 없으면 이 명령도 없음
+        self.assertEqual(self.run_one(d), [])
+
+
+class ReturnApp(FakeApp):
+    start_usd = 7800
+    fail = False
+
+    async def return_message(self):
+        if self.fail:
+            raise ConnectionError("바이낸스에 연결하지 못함")
+        return {"content": "📊 주인장 수익률 · 10/21 20:00 기준\n시작: $7,800.00\n현재: $8,123.45\n수익률: +4.15% (+$323.45)", "embeds": []}
+
+
+class ReturnCommandTest(BotCase):
+    """/주인장수익률 — 시작 금액이 있으면 /포지션과 함께 등록되고, 같은 규칙(#잡담방 · 막기)으로 수익률 글을 답함."""
+    App = ReturnApp
+
+    def test_registers_both_and_reregisters_when_list_changes(self):
+        self.app.state["cmd_registered"] = {"g1": '{"description": "운영자가 지금 들고 있는 포지션 보기", "name": "포지션", "type": 1}'}
+        self.calls.clear()
+        asyncio.run(self.bot._on_ready({"application": {"id": "app1"}, "guilds": [{"id": "g1"}]}))
+        puts = [b for m, _, b, _ in self.calls if m == "PUT"]
+        self.assertEqual(puts, [[COMMAND, RETURN_COMMAND]])                  # 옛 등록(/포지션만)과 달라서 다시 등록
+        self.assertTrue(all(len(c["description"]) <= 100 for c in puts[0]))
+
+    def test_answers_with_return_text(self):
+        d = interaction(1)
+        d["data"]["name"] = "주인장수익률"
+        calls = self.run_one(d)
+        self.assertEqual(calls[0][2], {"type": 5})
+        self.assertEqual(calls[1][2]["content"].split("\n"), ["📊 주인장 수익률 · 10/21 20:00 기준", "시작: $7,800.00",
+                                                             "현재: $8,123.45", "수익률: +4.15% (+$323.45)"])
+        self.assertEqual(self.app.asked, 0)                                  # /포지션 쪽은 묻지 않음
+
+    def test_other_channel_hint_and_failure_message(self):
+        d = interaction(2, channel="공지사항")
+        d["data"]["name"] = "주인장수익률"
+        self.assertEqual(self.run_one(d)[0][2]["data"]["content"], "💬 /주인장수익률은 #잡담방에서 쓸 수 있음.")
+        self.app.fail = True
+        d = interaction(3)
+        d["data"]["name"] = "주인장수익률"
+        calls = self.run_one(d)
+        self.assertEqual(calls[1][2]["content"], "⚠️ 지금은 바이낸스에서 값을 받지 못함. 잠시 뒤 다시 시도 바람.")   # '생각 중…'에 멈추지 않음
+
+    def test_spam_blocked_quietly(self):
+        for i in range(10):
+            self.run_one(interaction(i), now=1000.0 + i)
+        d = interaction(10)
+        d["data"]["name"] = "주인장수익률"                                  # 두 명령을 합쳐 셈
+        calls = self.run_one(d, now=1010.0)
+        self.assertEqual(calls[0][2]["data"]["content"], "⏳ 지금은 /주인장수익률을 쓸 수 없음. 나중에 다시 시도 바람.")
+        self.assertEqual(self.app.d.sent, [("status", "🚫 태규의 명령(/포지션 · /주인장수익률)을 6시간 막음 (5분 안에 10번 넘게 부름)")])
 
 
 EWY = {"symbol": "EWYUSDT", "positionAmt": "20", "entryPrice": "152.83045678", "markPrice": "155.00000000",

@@ -1,6 +1,7 @@
 """설정 파일(.env) 읽기. 키와 웹후크 주소는 이 파일에만 두고, 코드 · 저장소 · 기록에는 넣지 않습니다."""
 import os
 import stat
+from decimal import Decimal, InvalidOperation
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENV_PATH = os.path.join(HERE, ".env")
@@ -57,7 +58,18 @@ def load(path=ENV_PATH):
             "spot": e.get("SPOT", "1").strip() != "0",                    # 현물 체결 알림 · 보유 (0 이면 끔)
             "briefing_hour": _hour(e, "BRIEFING_HOUR", "8"),              # 아침 경제 브리핑 시각
             "briefing_url": e.get("BRIEFING_URL") or None,               # 브리핑 글을 받는 곳 (기본: GitHub candleman-briefing)
+            "start_usd": _money(e, "START_USD", "7800"),                  # 수익률 기준 시작 금액 (10/21 댕이: $7,800 으로 시작 · 0 이면 끔)
             "update_hour": _hour(e, "UPDATE_HOUR", "5")}
+
+
+def _money(e, key, default):
+    """달러 금액 하나 (쉼표 · $ 는 무시). 0 이하면 None — 그 기능을 끔."""
+    raw = (e.get(key) or default).replace(",", "").replace("$", "").strip()
+    try:
+        v = Decimal(raw)
+    except InvalidOperation:
+        raise ConfigError("%s 는 달러 금액이어야 해요 (예: %s=7800)" % (key, key)) from None
+    return v if v > 0 else None
 
 
 def _hour(e, key, default):
