@@ -24,6 +24,7 @@ OUTAGE_NOTE_S = 2 * 60         # 이보다 오래 바이낸스에 못 붙으면 
 NET_ERRORS = (OSError, asyncio.TimeoutError, BinanceError, ValueError)   # 인터넷 · 거래소 쪽 문제 (코드 오류는 아님)
 POS_POST_DELAY_S = 3           # 체결 뒤 이만큼 조용하면 #현재포지션에 새로 올림 (나눠서 체결돼도 한 번)
 POS_CHECK_S = 10 * 60          # 체결 소식을 놓쳤을 때를 대비해 이만큼마다 포지션을 한 번 견줌
+UPDATE_TRIES = 3               # 자동 업데이트: 시험에 떨어진 같은 판은 이만큼(하루 한 번)까지 다시 시험
 
 
 def now_ms():
@@ -361,8 +362,8 @@ class App:
         if status == "error":
             store.log("업데이트 확인 실패: %s" % detail)
             return
-        if self.state.get("update_skip") == new:          # 이미 안 받기로 한 판
-            return
+        if self.state.get("update_skip") == new or (self.state.get("update_fails") or {}).get(new, 0) >= UPDATE_TRIES:
+            return                                        # 이미 안 받기로 한 판 · 시험에 여러 번 떨어진 판
         if status == "diverged":
             self.state["update_skip"] = new
             store.save_state(self.state)
@@ -370,10 +371,12 @@ class App:
                              % (new[:7], old[:7]))
             return
         ok, tail = await asyncio.to_thread(updater.test, new)
-        if not ok:
-            self.state["update_skip"] = new
+        if not ok:                                        # 폰에서 잠깐 떨어진 것일 수도 있어 사흘까지는 다음 날 다시 시험
+            fails = {new: (self.state.get("update_fails") or {}).get(new, 0) + 1}
+            self.state["update_fails"] = fails
             store.save_state(self.state)
-            await self.d.put("status", "⚠️ 자동 업데이트 안 함: 새 판(%s) 시험 실패 · 지금 판 그대로 (%s)" % (new[:7], tail))
+            later = " · 내일 다시 시험함" if fails[new] < UPDATE_TRIES else " · 이 판은 더 시도하지 않음"
+            await self.d.put("status", "⚠️ 자동 업데이트 안 함: 새 판(%s) 시험 실패 · 지금 판 그대로 (%s)%s" % (new[:7], tail, later))
             return
         ok, err = await asyncio.to_thread(updater.switch, new)
         if not ok:

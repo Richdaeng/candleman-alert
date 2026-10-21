@@ -175,17 +175,18 @@ class AppUpdateTest(unittest.TestCase):
         asyncio.run(app._auto_update())
         self.assertEqual(fake.calls, ["check", "test", "switch", "mark_done", "restart"])
 
-    def test_failed_tests_reported_once_and_not_retried(self):
+    def test_failed_tests_retried_for_three_days_then_given_up(self):
         fake = FakeUpdater(test_ok=False)
         app = self.make(fake)
-        asyncio.run(app._auto_update())
-        self.assertEqual(fake.calls, ["check", "test"])
-        texts = self.sent(app)
-        self.assertEqual(len(texts), 1)
+        texts = []
+        for _ in range(4):                                               # 하루 한 번씩 나흘
+            asyncio.run(app._auto_update())
+            texts += self.sent(app)
+        self.assertEqual(fake.calls, ["check", "test"] * 3 + ["check"])  # 사흘까지만 다시 시험
+        self.assertEqual(len(texts), 3)
         self.assertIn("⚠️ 자동 업데이트 안 함: 새 판(bbbbbbb) 시험 실패 · 지금 판 그대로", texts[0])
-        asyncio.run(app._auto_update())                                  # 다음 날 같은 판이면
-        self.assertEqual(fake.calls, ["check", "test", "check"])         # 다시 시험하지 않음
-        self.assertEqual(self.sent(app), [])
+        self.assertTrue(texts[0].endswith("· 내일 다시 시험함"))
+        self.assertTrue(texts[2].endswith("· 이 판은 더 시도하지 않음"))
 
     def test_no_new_version_is_quiet(self):
         fake = FakeUpdater(status="same")

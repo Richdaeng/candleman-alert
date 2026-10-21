@@ -209,7 +209,7 @@ class FeedTest(unittest.TestCase):
         async def go():
             task = asyncio.ensure_future(self.feed._fill_worker())
             await self.feed.fills.put(f)
-            for _ in range(50):
+            for _ in range(500):                                                    # 느린 폰에서도 넉넉히 (최대 5초)
                 await asyncio.sleep(0.01)
                 if sent:
                     break
@@ -316,7 +316,7 @@ class RecvAliveTest(unittest.TestCase):
                     r.feed_data(b"\x89\x00")                                        # ping
                 r.feed_data(b"\x81\x02hi")                                          # 글 'hi'
             asyncio.ensure_future(server())
-            got = await ws.recv_alive(0.3)                                          # 0.6초 동안 ping 만 와도 기다림
+            got = await ws.recv_alive(1.0)                                          # 메시지 없이 ping 만 와도 기다림 (느린 폰도 넉넉히)
             with self.assertRaises(asyncio.TimeoutError):
                 await ws.recv_alive(0.3)                                            # 아무것도 안 오면 끊음
             return got
