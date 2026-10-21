@@ -92,6 +92,20 @@ def credit_card(rows):
             "description": "\n".join(lines), "color": COLOR}
 
 
+def impact(v):
+    """중요도 1~5 (과거에 같은 일정이 시장을 얼마나 움직였나 · 클라우드 작업이 매김). 없거나 이상하면 0."""
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return 0
+    return n if 1 <= n <= 5 else 0
+
+
+def stars(n):
+    """중요도 그림: 4 → '★★★★☆'."""
+    return "★" * n + "☆" * (5 - n)
+
+
 def _clip(s):
     s = " ".join(str(s).split())
     return s if len(s) <= MAX_CHARS else s[:MAX_CHARS - 1] + "…"
@@ -109,7 +123,9 @@ def parse_brief(text, today):
     plan = []
     for x in (j.get("schedule") or [])[:MAX_LINES]:
         if isinstance(x, dict) and str(x.get("what") or "").strip():
-            plan.append("**%s** %s" % (_clip(x.get("when") or ""), _clip(x["what"])) if x.get("when") else _clip(x["what"]))
+            line = "**%s** %s" % (_clip(x.get("when") or ""), _clip(x["what"])) if x.get("when") else _clip(x["what"])
+            n = impact(x.get("impact"))
+            plan.append("%s %d점 · %s" % (stars(n), n, line) if n else line)
         elif isinstance(x, str) and x.strip():
             plan.append(_clip(x))
     if not night and not plan:
@@ -128,7 +144,9 @@ def compose(today, rows, brief):
         if night:
             cards.append({"title": "🌙 밤사이", "description": "\n".join("· " + s for s in night), "color": COLOR})
         if plan:
-            cards.append({"title": "📅 다가오는 일정", "description": "\n".join(plan), "color": COLOR})
+            rated = any(p.startswith(("★", "☆")) for p in plan)
+            cards.append({"title": "📅 다가오는 일정" + (" · 중요도 5점 만점" if rated else ""), "description": "\n".join(plan),
+                          "color": COLOR})
     if cards:
         cards[-1]["footer"] = {"text": FOOTER if brief else "투자 권유 아님 · 숫자: 금융투자협회"}
     head = "🗞️ **%d/%d (%s) 아침 경제 브리핑**" % (today.month, today.day, WEEKDAY[today.weekday()])

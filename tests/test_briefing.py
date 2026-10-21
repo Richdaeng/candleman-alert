@@ -27,7 +27,10 @@ def fake_kofia(url, body):
 
 def brief_json(date="2026-10-22", **k):
     j = {"date": date, "overnight": ["미국 증시: 나스닥 +1.2% · S&P500 +0.8%", "비트코인 $67,200 (+2.1%)"],
-         "schedule": [{"when": "10/23 (금)", "what": "한국은행 금통위 · 기준금리 결정"}, "11/3 (화) 미국 중간선거"]}
+         "schedule": [{"when": "10/23 (금)", "what": "한국은행 금통위 · 기준금리 결정", "impact": 3, "why": "국내 금리 · 환율"},
+                      {"when": "10/28 (수)", "what": "미국 FOMC 기준금리 결정", "impact": "5"},
+                      {"when": "10/29 (목)", "what": "아마존 실적 발표", "impact": 9},           # 이상한 점수는 별 없이
+                      "11/3 (화) 미국 중간선거"]}
     j.update(k)
     return json.dumps(j, ensure_ascii=False)
 
@@ -56,13 +59,16 @@ class BriefTest(unittest.TestCase):
         night, plan = briefing.parse_brief(brief_json(overnight=["가" * 200] + ["줄"] * 10), TODAY)
         self.assertEqual(len(night), briefing.MAX_LINES)
         self.assertEqual(len(night[0]), briefing.MAX_CHARS)
-        self.assertEqual(plan, ["**10/23 (금)** 한국은행 금통위 · 기준금리 결정", "11/3 (화) 미국 중간선거"])
+        self.assertEqual(plan, ["★★★☆☆ 3점 · **10/23 (금)** 한국은행 금통위 · 기준금리 결정",
+                                "★★★★★ 5점 · **10/28 (수)** 미국 FOMC 기준금리 결정",
+                                "**10/29 (목)** 아마존 실적 발표", "11/3 (화) 미국 중간선거"])
 
     def test_compose(self):
         rows = briefing.kofia_rows(TODAY, TODAY, fetch=fake_kofia)
         m = briefing.compose(TODAY, rows, briefing.parse_brief(brief_json(), TODAY))
         self.assertEqual(m["content"], "🗞️ **10/22 (목) 아침 경제 브리핑**")
-        self.assertEqual([c["title"] for c in m["embeds"]], ["💳 신용 · 미수 잔고 (10/19 월 기준)", "🌙 밤사이", "📅 다가오는 일정"])
+        self.assertEqual([c["title"] for c in m["embeds"]], ["💳 신용 · 미수 잔고 (10/19 월 기준)", "🌙 밤사이",
+                                                            "📅 다가오는 일정 · 중요도 5점 만점"])
         self.assertEqual(m["embeds"][1]["description"], "· 미국 증시: 나스닥 +1.2% · S&P500 +0.8%\n· 비트코인 $67,200 (+2.1%)")
         self.assertEqual(m["embeds"][-1]["footer"]["text"], briefing.FOOTER)               # AI 가 정리했다는 것을 밝힘
         bare = briefing.compose(TODAY, rows, None)
