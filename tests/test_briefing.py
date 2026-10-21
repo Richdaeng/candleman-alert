@@ -64,7 +64,7 @@ class BriefTest(unittest.TestCase):
         self.assertEqual(m["content"], "🗞️ **10/22 (목) 아침 경제 브리핑**")
         self.assertEqual([c["title"] for c in m["embeds"]], ["💳 신용 · 미수 잔고 (10/19 월 기준)", "🌙 밤사이", "📅 다가오는 일정"])
         self.assertEqual(m["embeds"][1]["description"], "· 미국 증시: 나스닥 +1.2% · S&P500 +0.8%\n· 비트코인 $67,200 (+2.1%)")
-        self.assertEqual(m["embeds"][-1]["footer"]["text"], "투자 권유 아님 · 자료: 금융투자협회 · 뉴스 검색")
+        self.assertEqual(m["embeds"][-1]["footer"]["text"], briefing.FOOTER)               # AI 가 정리했다는 것을 밝힘
         bare = briefing.compose(TODAY, rows, None)
         self.assertTrue(bare["content"].endswith("밤사이 소식 · 일정은 오늘 준비되지 않음"))
         self.assertEqual(len(bare["embeds"]), 1)

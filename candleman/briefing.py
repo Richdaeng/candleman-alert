@@ -23,6 +23,7 @@ WAIT_MIN = 20              # 정한 시각에 브리핑 글이 아직 없으면 
 LAST_HOUR = 12             # 이 시각이 지나면 그날 브리핑은 건너뜀 (늦게 켜졌을 때)
 MAX_LINES, MAX_CHARS = 7, 90
 COLOR = 3447003            # 브리핑 카드 띠 색 (파랑)
+FOOTER = "투자 권유 아님 · 숫자: 금융투자협회 · 소식 · 일정: AI가 뉴스 검색으로 정리 (틀릴 수 있음)"
 WEEKDAY = "월화수목금토일"
 
 
@@ -129,7 +130,7 @@ def compose(today, rows, brief):
         if plan:
             cards.append({"title": "📅 다가오는 일정", "description": "\n".join(plan), "color": COLOR})
     if cards:
-        cards[-1]["footer"] = {"text": "투자 권유 아님 · 자료: 금융투자협회 · 뉴스 검색"}
+        cards[-1]["footer"] = {"text": FOOTER if brief else "투자 권유 아님 · 숫자: 금융투자협회"}
     head = "🗞️ **%d/%d (%s) 아침 경제 브리핑**" % (today.month, today.day, WEEKDAY[today.weekday()])
     if not brief:
         head += "\n밤사이 소식 · 일정은 오늘 준비되지 않음"
