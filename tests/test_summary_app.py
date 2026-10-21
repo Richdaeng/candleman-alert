@@ -9,7 +9,7 @@ from datetime import datetime
 from decimal import Decimal as D
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from candleman import fmt, summary  # noqa: E402
+from candleman import cards, fmt, summary  # noqa: E402
 
 
 def ms(y, mo, d, h, mi=0):
@@ -417,11 +417,12 @@ class ReturnTest(unittest.TestCase):
         asyncio.run(app.emit([], [{"kind": "fill", "t": 2, "effect": "close", "symbol": "EWYUSDT"}]))
         self.assertIsNotNone(app._ret_due)                                       # 다 정리 → 잠시 뒤 수익률
         asyncio.run(app._post_return())
-        (ch, text), = app.d.sent
+        (ch, head, embeds), = app.d.sent
         self.assertEqual(ch, "trade")
-        lines = text.split("\n")
-        self.assertTrue(lines[0].startswith("📊 %d 주인장 수익률 · " % self.year))
-        self.assertEqual(lines[1:], ["시작: $7,800.00", "현재: $7,130.00", "수익률: −8.59% (−$670.00)"])
+        self.assertTrue(head.startswith("📊 %d 주인장 수익률 · " % self.year))                 # 머리 줄(폰 알림)은 굵은 글씨 없이
+        self.assertEqual(embeds[0]["description"].split("\n"),
+                         ["시작: **$7,800.00**", "현재: **$7,130.00**", "수익률: **−8.59%** (**−$670.00**)"])
+        self.assertEqual(embeds[0]["color"], cards.RED)                                       # 손실이면 빨간 띠
 
     def test_off_without_start(self):
         app = self.make(start=None)

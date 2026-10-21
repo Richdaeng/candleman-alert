@@ -9,6 +9,8 @@ import time
 import urllib.error
 import urllib.request
 
+from . import cards
+
 USER_AGENT = "DiscordBot (https://github.com/Richdaeng/candleman-alert, 1.0)"
 
 
@@ -69,6 +71,8 @@ class Discord:
         return self._post(channel, text)
 
     async def put(self, channel, text, embeds=None):
+        if embeds is None:                           # #실시간-매매 · #봇-상태 줄글은 머리 한 줄 + 카드로 (cards.py)
+            text, embeds = cards.card(channel, text)
         await self.q.put((channel, text, embeds))
 
     async def worker(self):

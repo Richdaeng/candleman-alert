@@ -8,7 +8,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from . import briefing, fmt, names, notices, store, summary, updater
+from . import briefing, cards, fmt, names, notices, store, summary, updater
 from .binance import WS_PRIVATE, Binance, BinanceError
 from .discord import Discord
 from .fmt import ZERO, dec
@@ -81,12 +81,12 @@ class App:
         self.t.load_positions(pos, now_ms())
         self.t.load_orders(orders, algos)
         n = now_ms()
-        line = "🤖 시작함 · 포지션 %d개 · 미체결 주문 %d개 · 조건부 주문 %d개" % (len(pos), len(orders), len(algos))
+        line = "🤖 시작함\n포지션 %d개 · 미체결 주문 %d개 · 조건부 주문 %d개" % (len(pos), len(orders), len(algos))
         if last_alive:                                    # 다시 켜는 몇 초 사이의 체결도 놓치지 않게 늘 견줌
             changes = self._diff_positions(prev, pos)
             if n - last_alive > GAP_NOTE_S * 1000:
                 self._add_gap(last_alive, n)
-                line += " · 꺼져 있던 시간 %s ~ %s" % (fmt.kst_text(last_alive), fmt.kst_text(n))
+                line += "\n꺼져 있던 시간 %s ~ %s" % (fmt.kst_text(last_alive), fmt.kst_text(n))
             if changes:
                 await self._post_gap_changes(last_alive, n, changes)
         await self.d.put("status", line)
@@ -120,7 +120,7 @@ class App:
             self.t = Tracker()                            # 반쯤 채운 장부는 버리고 다음에 처음부터
             if not told and now_ms() - since >= OUTAGE_NOTE_S * 1000:
                 told = True
-                await self.d.put("status", "⚠️ 켜졌지만 바이낸스에 연결이 안 됨 (%s부터) · 폰의 인터넷(와이파이)을 확인해 주세요. "
+                await self.d.put("status", "⚠️ 켜졌지만 바이낸스에 연결이 안 됨 (%s부터)\n폰의 인터넷(와이파이)을 확인해 주세요. "
                                            "연결되면 바로 시작함\n이유: %s" % (fmt.kst_text(since), why))
             await asyncio.sleep(wait)
             wait = min(wait * 2, 300)
@@ -129,7 +129,7 @@ class App:
         """돌다가 바이낸스 연결이 끊긴 채 OUTAGE_NOTE_S 넘게 못 붙으면 #봇-상태에 한 번 알림 (다시 붙으면 '🔌 … 다시 붙음')."""
         if self.down_since and not getattr(self, "_outage_told", False) and n - self.down_since >= OUTAGE_NOTE_S * 1000:
             self._outage_told = True
-            await self.d.put("status", "⚠️ 바이낸스 연결이 끊긴 뒤 다시 붙지 못하고 있음 (%s부터) · 폰의 인터넷(와이파이)을 확인해 주세요. "
+            await self.d.put("status", "⚠️ 바이낸스 연결이 끊긴 뒤 다시 붙지 못하고 있음 (%s부터)\n폰의 인터넷(와이파이)을 확인해 주세요. "
                                        "다시 붙으면 그사이 바뀐 것을 알림" % fmt.kst_text(self.down_since))
 
     # ------------------------------------------------------------------ 실시간
@@ -456,7 +456,8 @@ class App:
             cache = self._ret_cache = (now, await self.equity_usd())
         start, t = base
         note = "%s 전체 자산" % fmt.kst_text(t) if t else None
-        return {"content": summary.return_text(year, start, cache[1], fmt.kst_text(int(cache[0] * 1000)), note), "embeds": []}
+        head, embeds = cards.card("trade", summary.return_text(year, start, cache[1], fmt.kst_text(int(cache[0] * 1000)), note))
+        return {"content": head, "embeds": embeds or []}                 # #실시간-매매 글처럼 머리 한 줄 + 카드
 
     async def _post_return(self):
         """선물 포지션을 끝내거나(정리 · 방향 바꿈) 현물을 모두 판 뒤 #실시간-매매에 주인장 수익률을 한 번."""
@@ -466,7 +467,7 @@ class App:
         try:
             self._ret_cache = None                        # 정리한 뒤의 값으로
             msg = await self.return_message()
-            await self.d.put("trade", msg["content"])
+            await self.d.put("trade", msg["content"], msg["embeds"])
         except NET_ERRORS as e:
             store.log("수익률 조회 실패 — 1분 뒤 다시: %s" % e)
             self._ret_due = now_ms() + 60_000

@@ -147,12 +147,17 @@ class AppUpdateTest(unittest.TestCase):
         app.d, app.b, app.t, app.state, app.cfg, app.hour = Discord({"trade": "u1", "summary": "u2", "status": "u3"}), FB(), Tracker(), {}, {}, 22
         return app
 
+    @staticmethod
+    def whole(text, embeds):
+        """머리 줄 + 카드 글 (카드 안의 굵은 글씨 표시는 뺌) — 시험은 글 전체를 봄."""
+        return "\n".join([text] + [e.get("description", "").replace("**", "") for e in embeds or []])
+
     def sent(self, app, channel="status"):
         out = []
         while not app.d.q.empty():
-            ch, text, _ = app.d.q.get_nowait()
+            ch, text, embeds = app.d.q.get_nowait()
             if ch == channel:
-                out.append(text)
+                out.append(self.whole(text, embeds))
         return out
 
     def test_due_once_a_day_at_five_kst(self):
@@ -270,7 +275,7 @@ class AppUpdateTest(unittest.TestCase):
         items = []
         while not app.d.q.empty():
             items.append(app.d.q.get_nowait())
-        trade = [t for ch, t, _ in items if ch == "trade"]
+        trade = [self.whole(t, e) for ch, t, e in items if ch == "trade"]
         self.assertEqual(len(trade), 1)
         self.assertIn("비트코인(BTC) 롱 0.08 BTC → 없음", trade[0])
         status = [t for ch, t, _ in items if ch == "status"]

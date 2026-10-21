@@ -102,7 +102,7 @@ class SpotFeed:
         n = now_ms()
         self.app._pos_due = n                              # #현재포지션은 지금 값으로 다시 맞춤
         if n - since >= GAP_NOTE_S * 1000:
-            await self.app.d.put("status", "🔌 현물 연결이 끊겼다가 다시 붙음 (%s ~ %s) · 그사이 현물 체결 알림은 빠졌을 수 있음"
+            await self.app.d.put("status", "🔌 현물 연결이 끊겼다가 다시 붙음 (%s ~ %s)\n그사이 현물 체결 알림은 빠졌을 수 있음"
                                  % (fmt.kst_text(since), fmt.kst_text(n)))
 
     async def handle(self, msgs, fills, recs):
