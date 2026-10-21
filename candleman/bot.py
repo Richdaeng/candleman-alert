@@ -4,8 +4,8 @@
 밖에서 폰으로 들어오는 문은 생기지 않습니다. 받은 것에서는 명령 이름 · 채널 이름 · 부른 사람만 보고, 무엇도 실행하지 않습니다.
 봇에는 서버 권한을 하나도 주지 않습니다(명령에 답하는 데는 권한이 필요 없음).
 
-같은 사람이 5분 안에 10번 넘게 부르면 그 사람의 /포지션은 6시간 막습니다(관리자는 예외). 이 규칙은 공지에 적지 않고,
-막힌 사람에게는 '지금은 쓸 수 없음'만 보이며, 누가 막혔는지는 #봇-상태에만 알립니다.
+같은 사람이 5분 안에 10번 넘게 부르면 그 사람의 /포지션은 6시간 막습니다(서버 주인 한 사람만 예외 — 관리자 역할을
+받은 사람도 막힘). 이 규칙은 공지에 적지 않고, 막힌 사람에게는 '지금은 쓸 수 없음'만 보이며, 누가 막혔는지는 #봇-상태에만 알립니다.
 """
 import asyncio
 import json
@@ -21,9 +21,8 @@ from .ws import WebSocket, WSClosed
 GATEWAY = "wss://gateway.discord.gg/?v=10&encoding=json"
 API = "https://discord.com/api/v10"
 USER_AGENT = "DiscordBot (https://github.com/Richdaeng/candleman-alert, 1.0)"
-COMMAND = {"name": "포지션", "description": "지금 들고 있는 포지션 보기", "type": 1, "contexts": [0]}
+COMMAND = {"name": "포지션", "description": "운영자가 지금 들고 있는 포지션 보기", "type": 1}   # 서버 전용 명령이라 contexts 는 안 씀
 WINDOW_S, LIMIT, BLOCK_S = 5 * 60, 10, 6 * 3600
-ADMINISTRATOR = 1 << 3
 EPHEMERAL = 1 << 6                     # 부른 사람에게만 보이는 답
 FATAL_CLOSE = {4004: "봇 토큰이 맞지 않음", 4013: "intents 값이 잘못됨", 4014: "허용되지 않은 intents"}
 
@@ -69,6 +68,7 @@ class Bot:
         self.acked = True
         self.ws = None
         self.guard = RateGuard((app.state or {}).get("cmd_blocked"))
+        self.owners = {}                     # 서버 번호 → 서버 주인 번호 (제한에서 빠지는 단 한 사람 · None 이면 알아보는 중)
 
     def __repr__(self):                      # 실수로 찍혀도 토큰이 나오지 않게
         return "Bot(channel=%r)" % self.channel_name
@@ -180,7 +180,10 @@ class Bot:
         sig = json.dumps(COMMAND, ensure_ascii=False, sort_keys=True)
         for g in d.get("guilds", []):
             gid = g.get("id")
-            if not gid or done.get(gid) == sig:           # 같은 명령이 이미 등록돼 있으면 다시 하지 않음
+            if not gid:
+                continue
+            await self._load_owner(gid)
+            if done.get(gid) == sig:                      # 같은 명령이 이미 등록돼 있으면 다시 하지 않음
                 continue
             try:
                 await self.rest("PUT", "/applications/%s/guilds/%s/commands" % (self.app_id, gid), [COMMAND])
@@ -189,6 +192,18 @@ class Bot:
                 store.log("/포지션 명령 등록")
             except Exception as e:
                 store.log("명령 등록 실패: %s" % e)
+
+    async def _load_owner(self, gid):
+        """서버 주인을 알아 둠. 못 알아내면 다음 명령 때 다시 묻고, 그동안은 주인도 다른 사람과 같은 제한을 받음."""
+        try:
+            owner = (await self.rest("GET", "/guilds/%s" % gid)).get("owner_id")
+        except Exception as e:
+            owner = None
+            store.log("서버 주인 확인 실패: %s" % e)
+        if owner:
+            self.owners[gid] = str(owner)
+        elif self.owners.get(gid) is None:
+            self.owners.pop(gid, None)                    # 다음 명령 때 다시 물음
 
     # ------------------------------------------------------------------ 명령
     async def _on_interaction_safe(self, d):
@@ -207,7 +222,11 @@ class Bot:
         who = member.get("nick") or user.get("global_name") or user.get("username") or uid
         if (d.get("channel") or {}).get("name") != self.channel_name:
             return await self._reply(iid, tok, "💬 /포지션은 #%s에서 쓸 수 있음." % self.channel_name, private=True)
-        if not int(member.get("permissions") or 0) & ADMINISTRATOR:
+        gid = d.get("guild_id")
+        if gid and gid not in self.owners:                # 시작할 때 못 알아냈으면 뒤에서 다시 (이번 답은 늦추지 않음)
+            self.owners[gid] = None                       # 알아보는 중 (겹쳐 묻지 않게)
+            asyncio.create_task(self._load_owner(gid))
+        if uid != self.owners.get(gid):                   # 서버 주인만 제한에서 빠짐
             verdict = self.guard.check(uid, now_s)
             if verdict == "just_blocked":
                 self.app.state["cmd_blocked"] = self.guard.blocked

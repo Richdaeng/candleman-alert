@@ -219,8 +219,8 @@ class App:
         when = fmt.kst_text(int(cache[0] * 1000))
         lines = summary.position_lines(cache[1])
         if not lines:
-            return "📌 지금 들고 있는 포지션 없음 · %s 기준" % when
-        return "\n".join(["📌 지금 들고 있는 포지션 · %s 기준" % when] + lines)
+            return "📌 운영자는 지금 들고 있는 포지션이 없음 · %s 기준" % when
+        return "\n".join(["📌 운영자가 지금 들고 있는 포지션 · %s 기준" % when] + lines)
 
     # ------------------------------------------------------------------ 안쪽
     async def emit(self, msgs, recs):
