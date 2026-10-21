@@ -306,8 +306,8 @@ class App:
         positions = await self.b.positions()
         bnb = await self.b.price("BNBUSDT") if any((r.get("asset") == "BNB") for r in fees + funding) else None
         gaps = [(a, b) for a, b in self.state.get("gaps", []) if b > start and a < end]
-        await self.d.put("summary", summary.build_text(start, end, fills, realized, fees, funding, positions, bnb, gaps,
-                                                       spot_fills=spot_fills, spot_rows=spot_rows))
+        msg = summary.build_message(start, end, fills, realized, fees, funding, positions, bnb, gaps, spot_fills=spot_fills, spot_rows=spot_rows)
+        await self.d.put("summary", msg["content"], msg["embeds"])
 
     async def positions_message(self):
         """/포지션 답 글(머리 한 줄 + 종목 카드). 바이낸스에는 30초에 한 번까지만 물음(연달아 불러도 같은 답)."""

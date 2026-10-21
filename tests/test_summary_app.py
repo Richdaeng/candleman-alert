@@ -30,21 +30,29 @@ class SummaryTest(unittest.TestCase):
         fees = [{"income": "-1.2", "asset": "USDT"}, {"income": "-0.001", "asset": "BNB"}]
         funding = [{"income": "-0.3333", "asset": "USDT"}]
         pos = [{"symbol": "SOLUSDT", "positionAmt": "12", "entryPrice": "150.24987654", "notional": "1803.00", "unRealizedProfit": "-12.00", "positionSide": "BOTH"}]
-        text = summary.build_text(s, e, fills, realized, fees, funding, pos, bnb_price="600")
-        self.assertEqual(text.split("\n"), [
-            "📊 10/21 요약 (10/20 22:00 ~ 10/21 22:00)",
-            "거래 2번",
-            "실현 손익 +$37.25",
-            "미실현 손익 −$12.00",
-            "수수료 −$1.80 (BNB로 낸 것은 지금 값으로 환산)",
-            "펀딩비 −$0.33",
-            "들고 있는 포지션",
-            "· 솔라나(SOL) 롱 12 SOL · 평균 가격 $150.25 · 약 $1,803어치(레버리지 포함) · 미실현 −$12.00",
+        msg = summary.build_message(s, e, fills, realized, fees, funding, pos, bnb_price="600")
+        self.assertEqual(msg["content"], "📒 10/21 (수) 하루 요약 · 10/20 22:00 ~ 10/21 22:00")       # 머리 줄은 굵은 글씨 없이
+        money, hold = msg["embeds"]
+        self.assertEqual((money["title"], money["color"]), ("💵 하루 손익", summary.CARD_LONG))      # 실현 + 수수료 + 펀딩비 > 0
+        self.assertEqual(money["description"].split("\n"), [
+            "거래 **2번**",
+            "실현 손익 **+$37.25**",
+            "미실현 손익 **−$12.00**",
+            "수수료 **−$1.80**",
+            "└ BNB로 낸 것은 지금 값으로 환산",
+            "펀딩비 **−$0.33**",
         ])
-        empty = summary.build_text(s, e, [], [], [], [], [], gaps=[(ms(2026, 10, 21, 3), ms(2026, 10, 21, 4, 30))])
-        self.assertIn("들고 있는 포지션: 없음", empty)
-        self.assertIn("거래 없음", empty)
-        self.assertIn("03:00~04:30", empty)
+        self.assertEqual(hold["title"], "📌 들고 있는 포지션")
+        self.assertEqual(hold["description"].split("\n"), [
+            "🟢 **솔라나(SOL) 롱** · 12 SOL",
+            "└ 평균 가격 $150.25 · 약 $1,803어치(레버리지 포함) · 미실현 −$12.00",
+        ])
+        empty = summary.build_message(s, e, [], [], [], [], [], gaps=[(ms(2026, 10, 21, 3), ms(2026, 10, 21, 4, 30))])
+        money, hold = empty["embeds"]
+        self.assertEqual(money["description"].split("\n")[0], "거래 없음")
+        self.assertEqual(money["color"], summary.CARD_REST)                                     # 손익 0 이면 회색
+        self.assertEqual(hold["description"], "없음")
+        self.assertIn("03:00~04:30", hold["footer"]["text"])                                    # 꺼져 있던 시간은 작은 글씨로
 
     def test_text_with_spot(self):
         from decimal import Decimal as D
@@ -56,18 +64,27 @@ class SummaryTest(unittest.TestCase):
                 {"kind": "spot_fill", "oid": 9, "side": "SELL", "usd": True, "pnl": None, "fee_usd": "0.5"}]      # 산 값을 모르는 매도
         rows = [{"asset": "BTC", "qty": D("0.06"), "price": D("83000"), "value": D("4980"), "avg": D("82000")},
                 {"asset": "SOL", "qty": D("2"), "price": D("150"), "value": D("300"), "avg": None}]
-        text = summary.build_text(s, e, fills, [{"income": "212.4", "asset": "USDT"}], [{"income": "-8.1", "asset": "USDT"}], [], [],
-                                  spot_fills=spot, spot_rows=rows)
-        self.assertEqual(text.split("\n")[1:], [
-            "거래 4번 (선물 1번 · 현물 3번)",
-            "실현 손익 +$259.08 (선물 +$212.40 · 현물 +$46.68 · 현물 일부는 산 값을 몰라 뺌)",
-            "미실현 손익 +$60.00 (선물 $0.00 · 현물 +$60.00)",
-            "수수료 −$13.33 (선물 −$8.10 · 현물 −$5.23)",
-            "펀딩비 $0.00",
-            "들고 있는 포지션",
-            "· 비트코인(BTC) 현물 0.06 BTC · 평균 매수가 $82,000.00 · 약 $4,980어치 · 미실현 +$60.00",
-            "· 솔라나(SOL) 현물 2 SOL · 약 $300어치",
+        msg = summary.build_message(s, e, fills, [{"income": "212.4", "asset": "USDT"}], [{"income": "-8.1", "asset": "USDT"}], [], [],
+                                    spot_fills=spot, spot_rows=rows)
+        money, hold = msg["embeds"]
+        self.assertEqual(money["description"].split("\n"), [
+            "거래 **4번** (선물 1번 · 현물 3번)",
+            "실현 손익 **+$259.08**",
+            "└ 선물 +$212.40 · 현물 +$46.68 · 현물 일부는 산 값을 몰라 뺌",
+            "미실현 손익 **+$60.00**",
+            "└ 선물 $0.00 · 현물 +$60.00",
+            "수수료 **−$13.33**",
+            "└ 선물 −$8.10 · 현물 −$5.23",
+            "펀딩비 **$0.00**",
         ])
+        self.assertEqual(hold["description"].split("\n"), [
+            "🪙 **비트코인(BTC) 현물** · 0.06 BTC",
+            "└ 평균 매수가 $82,000.00 · 약 $4,980어치 · 미실현 +$60.00",
+            "🪙 **솔라나(SOL) 현물** · 2 SOL",
+            "└ 약 $300어치",
+        ])
+        losing = summary.build_message(s, e, [], [{"income": "-50", "asset": "USDT"}], [], [], [])
+        self.assertEqual(losing["embeds"][0]["color"], summary.CARD_SHORT)                      # 손실이 난 날은 빨강
 
 
 class FakeBinance:

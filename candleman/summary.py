@@ -50,17 +50,6 @@ def _basics(p):
     return base_of(p.get("symbol", "")), d, amt, notional
 
 
-def position_lines(positions):
-    """바이낸스 positionRisk 줄들 → '· 솔라나(SOL) 롱 12 SOL · 평균 가격 $150.25 · 약 $1,803어치(레버리지 포함) · 미실현 −$12.00'."""
-    out = []
-    for p in sorted(positions, key=lambda r: r.get("symbol", "")):
-        base, d, amt, notional = _basics(p)
-        out.append("· %s %s %s · 평균 가격 %s · %s · 미실현 %s" % (
-            names.label(base), fmt.side_word(d), names.amount(amt, base), fmt.price2(p.get("entryPrice")),
-            fmt.worth(notional), fmt.usd(dec(p.get("unRealizedProfit")), sign=True)))
-    return out
-
-
 def positions_message(positions, equity, when, spot=None):
     """/포지션 · #현재포지션 글: 머리 한 줄 + 종목마다 카드(embed) 한 장. 카드 안은 한 줄에 한 가지, 금액은 소수 둘째 자리까지.
 
@@ -119,31 +108,38 @@ def return_text(year, start, equity, when, start_note=None):
                       "수익률: %s (%s)" % (fmt.pct((equity - start) / start * 100), fmt.usd(equity - start, sign=True))])
 
 
-def spot_lines(rows):
-    """현물 보유 줄 — '· 비트코인(BTC) 현물 0.06 BTC · 평균 매수가 $82,000.00 · 약 $4,980어치 · 미실현 +$60.00'."""
+CARD_HOLD = 3447003                                                # 하루 요약의 '들고 있는 포지션' 카드 (파랑 · 브리핑과 같은 색)
+WEEKDAY = "월화수목금토일"
+
+
+def holding_lines(positions, spot_rows):
+    """하루 요약의 포지션 줄 — 종목마다 두 줄: '🟢 **솔라나(SOL) 롱** · 12 SOL' / '└ 평균 가격 $150.25 · 약 $1,803어치(레버리지 포함) · 미실현 −$12.00'."""
     out = []
-    for r in rows:
+    for p in sorted(positions, key=lambda r: r.get("symbol", "")):
+        base, d, amt, notional = _basics(p)
+        out += ["%s **%s %s** · %s" % ("🟢" if d > 0 else "🔴", names.label(base), fmt.side_word(d), names.amount(amt, base)),
+                "└ 평균 가격 %s · %s · 미실현 %s" % (fmt.price2(p.get("entryPrice")), fmt.worth(notional),
+                                                  fmt.usd(dec(p.get("unRealizedProfit")), sign=True))]
+    for r in spot_rows:
         avg = r.get("avg")
-        s = "· %s 현물 %s" % (names.label(r["asset"]), names.amount(r["qty"], r["asset"]))
+        parts = (["평균 매수가 %s" % fmt.price2(avg)] if avg is not None else []) + ["약 %s어치" % fmt.usd_about(r["value"])]
         if avg is not None:
-            s += " · 평균 매수가 %s" % fmt.price2(avg)
-        s += " · 약 %s어치" % fmt.usd_about(r["value"])
-        if avg is not None:
-            s += " · 미실현 %s" % fmt.usd((dec(r["price"]) - dec(avg)) * dec(r["qty"]), sign=True)
-        out.append(s)
+            parts.append("미실현 %s" % fmt.usd((dec(r["price"]) - dec(avg)) * dec(r["qty"]), sign=True))
+        out += ["🪙 **%s 현물** · %s" % (names.label(r["asset"]), names.amount(r["qty"], r["asset"])), "└ " + " · ".join(parts)]
     return out
 
 
-def _with_parts(total, parts):
-    """'+$248.40 (선물 +$212.40 · 현물 +$36.00)' — 덧붙일 것이 없으면 합계만."""
-    s = fmt.usd(total, sign=True)
-    return s + (" (%s)" % " · ".join(parts) if parts else "")
+def _amount_lines(label, total, parts):
+    """'실현 손익 **+$248.40**' + 나눠 볼 것이 있으면 '└ 선물 +$212.40 · 현물 +$36.00'."""
+    return ["%s **%s**" % (label, fmt.usd(total, sign=True))] + (["└ " + " · ".join(parts)] if parts else [])
 
 
-def build_text(start_ms, end_ms, fills, realized_rows, fee_rows, funding_rows, positions, bnb_price=None, gaps=(),
-               spot_fills=(), spot_rows=()):
-    """하루 요약 글. 선물 금액은 바이낸스 손익 기록(income), 현물은 이 프로그램 일지(spot_fill: 체결 때 셈한 손익 · 달러 수수료)와
-    지금 현물 보유(USDT 를 뺀 $10 이상 · spot_rows)로 셈. 현물이 있으면 합계 뒤에 (선물 · 현물)을 나눠 적음."""
+def build_message(start_ms, end_ms, fills, realized_rows, fee_rows, funding_rows, positions, bnb_price=None, gaps=(),
+                  spot_fills=(), spot_rows=()):
+    """하루 요약 글: 머리 한 줄 + 카드 두 장(💵 하루 손익 · 📌 들고 있는 포지션) — /포지션 · 브리핑처럼 한 줄에 한 가지
+    (10/21 댕이: "일일 요약이 너무 안 예쁘다"). 선물 금액은 바이낸스 손익 기록(income), 현물은 이 프로그램 일지(spot_fill: 체결 때 셈한
+    손익 · 달러 수수료)와 지금 현물 보유(USDT 를 뺀 $10 이상 · spot_rows)로 셈. 현물이 있으면 '└' 줄에 선물 · 현물을 나눠 적음.
+    손익 카드 띠는 실현 손익 + 수수료 + 펀딩비가 이익이면 초록 · 손실이면 빨강. 머리 줄은 폰 알림에 보여 굵은 글씨를 안 씀."""
     orders = {r.get("key") for r in fills if r.get("kind") == "fill"}
     spot = [r for r in spot_fills if r.get("kind") == "spot_fill"]
     spot_orders = {r.get("oid") for r in spot}
@@ -162,19 +158,16 @@ def build_text(start_ms, end_ms, fills, realized_rows, fee_rows, funding_rows, p
     real_parts = both(realized, spot_real, bool(sells)) + (["현물 일부는 산 값을 몰라 뺌"] if any(r.get("pnl") is None for r in sells) else [])
     fee_parts = both(fees, spot_fee, bool(spot_fee)) + (["BNB로 낸 것은 지금 값으로 환산"] if fee_conv else [])
     n = len(orders) + len(spot_orders)
-    s, e = fmt.kst(start_ms), fmt.kst(end_ms)
-    lines = ["📊 %s 요약 (%s ~ %s)" % (e.strftime("%m/%d"), s.strftime("%m/%d %H:%M"), e.strftime("%m/%d %H:%M")),
-             ("거래 %d번" % n + (" (선물 %d번 · 현물 %d번)" % (len(orders), len(spot_orders)) if spot_orders else "")) if n else "거래 없음",
-             "실현 손익 " + _with_parts(realized + spot_real, real_parts),
-             "미실현 손익 " + _with_parts(unreal + spot_unreal, both(unreal, spot_unreal, bool(known))),
-             "수수료 " + _with_parts(fees + spot_fee, fee_parts),
-             "펀딩비 %s" % fmt.usd(funding, sign=True)]
-    if positions or spot_rows:
-        lines.append("들고 있는 포지션")
-        lines += position_lines(positions) + spot_lines(spot_rows)
-    else:
-        lines.append("들고 있는 포지션: 없음")
+    trades = ("거래 **%d번**" % n + (" (선물 %d번 · 현물 %d번)" % (len(orders), len(spot_orders)) if spot_orders else "")) if n else "거래 없음"
+    pnl = ([trades] + _amount_lines("실현 손익", realized + spot_real, real_parts)
+           + _amount_lines("미실현 손익", unreal + spot_unreal, both(unreal, spot_unreal, bool(known)))
+           + _amount_lines("수수료", fees + spot_fee, fee_parts) + ["펀딩비 **%s**" % fmt.usd(funding, sign=True)])
+    net = (realized + spot_real + fees + spot_fee + funding).quantize(ZERO.scaleb(-2))
+    cards = [{"title": "💵 하루 손익", "description": "\n".join(pnl), "color": CARD_LONG if net > 0 else CARD_SHORT if net < 0 else CARD_REST},
+             {"title": "📌 들고 있는 포지션", "description": "\n".join(holding_lines(positions, spot_rows)) or "없음", "color": CARD_HOLD}]
     if gaps:
-        lines.append("※ 프로그램이 꺼져 있던 시간(%s)의 거래는 횟수와 현물 금액에서 빠졌을 수 있음. 선물 금액은 바이낸스 기록 기준이라 정확함." %
-                     ", ".join("%s~%s" % (fmt.kst_text(a, False), fmt.kst_text(b, False)) for a, b in gaps))
-    return "\n".join(lines)
+        cards[-1]["footer"] = {"text": "프로그램이 꺼져 있던 시간(%s)의 거래는 횟수와 현물 금액에서 빠졌을 수 있음 · 선물 금액은 바이낸스 기록이라 정확함"
+                                       % ", ".join("%s~%s" % (fmt.kst_text(a, False), fmt.kst_text(b, False)) for a, b in gaps)}
+    s, e = fmt.kst(start_ms), fmt.kst(end_ms)
+    head = "📒 %d/%d (%s) 하루 요약 · %s ~ %s" % (e.month, e.day, WEEKDAY[e.weekday()], s.strftime("%m/%d %H:%M"), e.strftime("%m/%d %H:%M"))
+    return {"content": head, "embeds": cards}
