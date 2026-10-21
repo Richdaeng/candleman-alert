@@ -11,7 +11,7 @@ from decimal import Decimal
 from . import fmt, store
 from .binance import WS_API, BinanceError
 from .fmt import ZERO, dec
-from .spot import DUST_USD, SHOW_USD, CostBook, SpotTracker, fill_text, sold_out
+from .spot import CASH, DUST_USD, SHOW_USD, CostBook, SpotTracker, fill_text, sold_out
 from .ws import WebSocket, WSClosed
 
 READ_IDLE_S = 5 * 60          # 서버 ping(20초마다)도 이만큼 없으면 죽은 연결로 보고 다시 붙음
@@ -38,6 +38,7 @@ class SpotFeed:
         self.down_since = None
         self.fills = asyncio.Queue()
         self.no_market = set()             # USDT 짝이 없는 자산 (값을 매길 수 없음)
+        self.off = set()                   # 키 권한 등으로 거절돼 이번 실행 동안 빼는 지갑 (Earn · 펀딩 · 선물 지갑)
         self.told_reject = False
 
     # ------------------------------------------------------------------ 실시간
@@ -100,7 +101,8 @@ class SpotFeed:
 
     async def _after_gap(self, since):
         n = now_ms()
-        self.app._pos_due = n                              # #현재포지션은 지금 값으로 다시 맞춤
+        if not getattr(self.app, "_pos_due", None):         # #현재포지션: 끊긴 사이 놓친 체결이 있었는지 견줘 봄
+            self.app._pos_due, self.app._pos_why = n, "check"
         if n - since >= GAP_NOTE_S * 1000:
             await self.app.d.put("status", "🔌 현물 연결이 끊겼다가 다시 붙음 (%s ~ %s)\n그사이 현물 체결 알림은 빠졌을 수 있음"
                                  % (fmt.kst_text(since), fmt.kst_text(n)))
@@ -141,7 +143,7 @@ class SpotFeed:
                                "quote": str(f.quote_qty), "usd": f.usd, "pnl": None if pnl is None else str(pnl),
                                "fee_usd": None if fee is None else str(fee)}])         # 하루 요약이 이 기록으로 현물을 셈
                 self.app._pos_cache = self.app._ret_cache = None   # /포지션 · /주인장수익률도 새 값으로
-                self.app._pos_due = now_ms() + 3000        # #현재포지션 새 글
+                self.app._pos_due, self.app._pos_why = now_ms() + 3000, "fill"   # #현재포지션 새 글
             except Exception as e:
                 store.log("현물 체결 글 오류: %s %s" % (type(e).__name__, str(e)[:160]))
 
@@ -218,16 +220,53 @@ class SpotFeed:
                 return None
             raise
 
+    async def _optional(self, name, get):
+        """현물 지갑 말고 다른 지갑 읽기. 키 권한 등으로 거절되면(4xx) 이번 실행 동안 그 지갑은 빼고(기록에 한 번) None.
+        인터넷 · 거래소 쪽 문제(5xx · 429 · 시계 어긋남)는 그대로 올려 보냄 → 부른 쪽이 조금 뒤 다시."""
+        if name in self.off:
+            return None
+        try:
+            return await get()
+        except BinanceError as e:
+            if not 400 <= (e.status or 0) < 500 or e.status in (418, 429) or e.code == -1021:
+                raise
+            self.off.add(name)
+            store.log("%s 읽기 거절 — 이번 실행 동안 빼고 보여 줌: %s" % (name, e))
+            return None
+
+    async def wallets(self):
+        """코인이 있는 곳마다 {지갑: {자산: 수량}} — 현물 지갑 · Earn(자유 · 기간 고정) · 펀딩 지갑 · 선물 지갑(증거금으로 둔 코인).
+        10/22 댕이: 전날 산 솔라나가 06:30 글에서 빠짐(판 기록 없이 현물 지갑에서 빠짐) · BNB 도 안 보임 → 현물 지갑 밖도 다 읽음.
+        Earn 자유 예치는 현물 지갑에도 'LD' 를 붙인 이름(LDSOL 등)으로 보일 수 있어, Earn 을 읽었으면 그것은 빼고 못 읽었을 때만 씀."""
+        b = self.app.b
+        flexible = await self._optional("Earn 자유 예치", b.earn_flexible)
+        spot, ld = {}, {}
+        for asset, qty in (await b.spot_balances()).items():
+            if asset.startswith("LD") and len(asset) > 2 and await self.price(asset) is None:
+                ld[asset[2:]] = ld.get(asset[2:], ZERO) + qty
+            else:
+                spot[asset] = qty
+        earn = dict(ld if flexible is None else flexible)
+        for asset, qty in (await self._optional("Earn 기간 고정", b.earn_locked) or {}).items():
+            earn[asset] = earn.get(asset, ZERO) + qty
+        return {"spot": spot, "earn": earn, "funding": await self._optional("펀딩 지갑", b.funding_balances) or {},
+                "futures": await self._optional("선물 지갑", b.futures_wallet) or {}}
+
     async def holdings(self, with_avg=True):
-        """돌려줌 (견줄 것: USDT 를 뺀 $1 이상 전부, 보일 것: 그중 $10 이상 · 큰 것부터). with_avg 면 보일 것에 평균 매수가를 붙임."""
+        """돌려줌 (견줄 것: 달러 코인(USDT 등)을 뺀 $1 이상 전부, 보일 것: 그중 $10 이상 · 큰 것부터). with_avg 면 보일 것에 평균 매수가를 붙임.
+        같은 코인은 지갑을 합쳐 한 줄 — where = {지갑: 수량} (카드에 '보관' 으로)."""
+        coins = {}
+        for wallet, balances in (await self.wallets()).items():
+            for asset, qty in balances.items():
+                if asset not in CASH and qty > 0:
+                    coins.setdefault(asset, {})[wallet] = qty
         rows = []
-        for asset, qty in sorted((await self.app.b.spot_balances()).items()):
-            if asset == "USDT":
-                continue
+        for asset, where in sorted(coins.items()):
             p = await self.price(asset)
+            qty = sum(where.values(), ZERO)
             if not p or qty * p < DUST_USD:
                 continue
-            rows.append({"asset": asset, "qty": qty, "price": p, "value": qty * p})
+            rows.append({"asset": asset, "qty": qty, "price": p, "value": qty * p, "where": where})
         rows.sort(key=lambda r: r["value"], reverse=True)
         shown = [dict(r) for r in rows if r["value"] >= SHOW_USD]
         if with_avg:

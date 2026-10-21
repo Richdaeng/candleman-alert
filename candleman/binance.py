@@ -169,6 +169,37 @@ class Binance:
                 out[r.get("asset")] = q
         return out
 
+    async def earn_flexible(self):
+        """Simple Earn 자유 예치 {자산: 수량} — 현물 지갑에서 Earn 으로 옮긴 코인 (조회만)."""
+        return await self._earn("/sapi/v1/simple-earn/flexible/position", "totalAmount")
+
+    async def earn_locked(self):
+        """Simple Earn 기간 고정 예치 {자산: 수량} (조회만)."""
+        return await self._earn("/sapi/v1/simple-earn/locked/position", "amount")
+
+    async def _earn(self, path, field):
+        out, page = {}, 1
+        while page <= 10:                                  # 100개씩 (넉넉히 1,000개까지)
+            j = await self._spot().call("GET", path, {"current": page, "size": 100}, signed=True)
+            rows = (j or {}).get("rows") or []
+            for r in rows:
+                q = dec(r.get(field))
+                if q > 0:
+                    out[r.get("asset")] = out.get(r.get("asset"), dec(0)) + q
+            if len(rows) < 100:
+                break
+            page += 1
+        return out
+
+    async def futures_wallet(self):
+        """선물 지갑에 증거금으로 둔 코인 {자산: 지갑 잔고} (예: 수수료 할인용 BNB)."""
+        out = {}
+        for a in (await self.account()).get("assets") or []:
+            q = dec(a.get("walletBalance"))
+            if q > 0:
+                out[a.get("asset")] = q
+        return out
+
     async def spot_open_orders(self):
         return await self._spot().call("GET", "/api/v3/openOrders", signed=True)
 

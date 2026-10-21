@@ -13,7 +13,7 @@ from .binance import WS_PRIVATE, Binance, BinanceError
 from .discord import Discord
 from .fmt import ZERO, dec
 from .spotfeed import SpotFeed
-from .tracker import Tracker, base_of
+from .tracker import USD_ASSETS, Tracker, base_of
 from .ws import WebSocket, WSClosed
 
 KEEPALIVE_S = 30 * 60          # listenKey 연장 (60분 만료)
@@ -25,7 +25,8 @@ START_RETRY_S = 10             # 켤 때 바이낸스에 못 붙으면 이만큼
 OUTAGE_NOTE_S = 2 * 60         # 이보다 오래 바이낸스에 못 붙으면 #봇-상태에 한 번 알림
 NET_ERRORS = (OSError, asyncio.TimeoutError, BinanceError, ValueError)   # 인터넷 · 거래소 쪽 문제 (코드 오류는 아님)
 POS_POST_DELAY_S = 3           # 체결 뒤 이만큼 조용하면 #현재포지션에 새로 올림 (나눠서 체결돼도 한 번)
-POS_CHECK_S = 10 * 60          # 체결 소식을 놓쳤을 때를 대비해 이만큼마다 포지션을 한 번 견줌
+POS_CHECK_S = 10 * 60          # 체결 소식을 놓쳤을 때를 대비해 이만큼마다 선물 포지션을 한 번 견줌
+POS_DAILY_LATE_MIN = 60        # 매일 정시(기본 08:50) #현재포지션 글을 놓쳤으면 이만큼(분) 안에서는 늦게라도 올림
 UPDATE_TRIES = 3               # 자동 업데이트: 시험에 떨어진 같은 판은 이만큼(하루 한 번)까지 다시 시험
 
 
@@ -46,6 +47,7 @@ class App:
         self._pos_cache = None
         self._outage_told = False
         self._pos_due = None                 # 이 시각(ms)이 지나면 #현재포지션을 견줘 봄
+        self._pos_why = None                 # 그 까닭: "fill" 체결 뒤 · "check" 다시 켬 · 끊김 · 10분 점검 (_post_positions)
         self._pos_posting = False
         self.start_usd = cfg.get("start_usd")   # 주인장 수익률의 시작 금액 (None 이면 수익률 글 · /주인장수익률 없음)
         self.start_year = cfg.get("start_year") or 2026   # 시작 금액이 기준인 해. 다음 해부터는 1월 1일 0시의 전체 자산
@@ -95,7 +97,7 @@ class App:
         if "last_summary_end" not in self.state:          # 처음 켠 날은 지난 구간 요약을 건너뜀
             self.state["last_summary_end"] = summary.window_for(n, self.hour)[1]
         self._snapshot()
-        self._pos_due = n                                 # 꺼져 있던 사이 바뀌었으면 #현재포지션도 새로
+        self._pos_due, self._pos_why = n, "check"         # 꺼져 있던 사이 선물 포지션이 바뀌었으면 #현재포지션도 새로
         try:                                              # 시작을 마쳤다는 표시 (termux/restart.sh 가 봄)
             with open(os.path.join(store.DATA_DIR, "started"), "w", encoding="utf-8") as f:
                 f.write(str(n))
@@ -189,7 +191,8 @@ class App:
 
     async def _after_gap(self, since):
         n = now_ms()
-        self._pos_due = n                                 # 끊긴 사이 바뀌었으면 #현재포지션도 새로 (같으면 안 올림)
+        if not getattr(self, "_pos_due", None):           # 끊긴 사이 선물 포지션이 바뀌었으면 #현재포지션도 새로 (같으면 안 올림)
+            self._pos_due, self._pos_why = n, "check"
         if n - since < GAP_NOTE_S * 1000:
             return
         self._add_gap(since, n)
@@ -252,10 +255,10 @@ class App:
             if i % 60 == 0:
                 self._snapshot()
             if i % POS_CHECK_S == 0 and not self._pos_due:
-                self._pos_due = now_ms()
+                self._pos_due, self._pos_why = now_ms(), "check"
             if self._pos_due and now_ms() >= self._pos_due and not self._pos_posting:
-                self._pos_due = None
-                asyncio.create_task(self._post_positions_if_changed())
+                why, self._pos_due, self._pos_why = self._pos_why or "fill", None, None
+                asyncio.create_task(self._post_positions(why))
             if self._ret_due and now_ms() >= self._ret_due and not self._ret_posting:
                 self._ret_due = None
                 asyncio.create_task(self._post_return())
@@ -279,6 +282,10 @@ class App:
                 await self._maybe_new_year(n)
             except Exception as e:
                 store.log("새해 기준 오류: %s %s" % (type(e).__name__, str(e)[:160]))
+            try:
+                await self._maybe_daily_positions(n)
+            except Exception as e:
+                store.log("정시 포지션 글 오류: %s %s" % (type(e).__name__, str(e)[:160]))
             try:
                 start, end = summary.window_for(n, self.hour)
                 if int(self.state.get("last_summary_end") or 0) < end and n - end < LATE_SUMMARY_S * 1000:
@@ -337,24 +344,33 @@ class App:
         for r in recs:
             if r.get("kind") == "fill":                       # 포지션이 바뀜 → /포지션은 새 값으로, #현재포지션은 잠시 뒤 새 글
                 self._pos_cache = self._ret_cache = None
-                self._pos_due = now_ms() + POS_POST_DELAY_S * 1000
+                self._pos_due, self._pos_why = now_ms() + POS_POST_DELAY_S * 1000, "fill"
             if r.get("kind") == "fill" and r.get("effect") in ("close", "flip") and getattr(self, "start_usd", None):
                 self._ret_due = now_ms() + POS_POST_DELAY_S * 1000   # 포지션을 끝냄 → 잠시 뒤 주인장 수익률
             if r.get("kind") == "fill" and r.get("effect") in ("open", "flip"):
                 await self._introduce(r.get("symbol", ""), r.get("t"))
 
-    async def _post_positions_if_changed(self):
-        """#현재포지션: 종목 · 방향 · 수량이 지난번 글과 다르면 지금 포지션 카드(/포지션과 같은 모양)를 새 글로 올림."""
-        if not self.d.has("positions") or getattr(self, "_pos_posting", False):
-            return
+    async def _post_positions(self, why="fill"):
+        """#현재포지션에 지금 포지션 카드(/포지션과 같은 모양)를 새 글로. 올렸거나 올릴 것이 없었으면 True, 못 했으면 False.
+        why — "fill" 체결 뒤: 종목 · 방향 · 수량이 지난 글과 다르면 · "check" 다시 켬 · 연결이 다시 붙음 · 10분마다: 선물 포지션이
+        지난 글과 다를 때만(놓친 체결) · "daily" 매일 08:50: 늘. 체결 없이 현물 쪽만 바뀐 것(지갑끼리 옮김 · Earn 이자 · 에어드랍)으로는
+        올리지 않음 (10/22 06:30 에 체결 없이 올라간 글 → 댕이: "현재포지션은 앞으로 오전 8시 50분에")."""
+        if not self.d.has("positions"):
+            return True
+        if getattr(self, "_pos_posting", False):
+            return False
         self._pos_posting = True
         try:
             positions = await self.b.positions()
+            futures = sorted("%s|%s|%s" % (r.get("symbol"), r.get("positionSide") or "BOTH", fmt.plain(r.get("positionAmt")))
+                             for r in positions)
+            last = self.state.get("positions_posted")
+            if why == "check" and last is not None and futures == sorted(s for s in last if not s.startswith("SPOT|")):
+                return True
             spot_all, shown = await self.spot.holdings(with_avg=False) if getattr(self, "spot", None) else ([], [])
-            sig = sorted(["%s|%s|%s" % (r.get("symbol"), r.get("positionSide") or "BOTH", fmt.plain(r.get("positionAmt")))
-                          for r in positions] + ["SPOT|%s|%s" % (r["asset"], fmt.plain(r["qty"])) for r in spot_all])
-            if sig == self.state.get("positions_posted"):
-                return
+            sig = sorted(futures + ["SPOT|%s|%s" % (r["asset"], fmt.plain(r["qty"])) for r in spot_all])
+            if why == "fill" and sig == last:
+                return True
             if shown:
                 await self.spot.add_avg(shown)
             try:
@@ -368,17 +384,49 @@ class App:
             await self.d.put("positions", msg["content"], msg["embeds"])
             self.state["positions_posted"] = sig
             store.save_state(self.state)
+            return True
         except NET_ERRORS as e:
             store.log("현재 포지션 조회 실패 — 1분 뒤 다시: %s" % e)
-            self._pos_due = now_ms() + 60_000
+            if why != "daily" and not getattr(self, "_pos_due", None):   # 정시 글은 _maybe_daily_positions 가 다시 함
+                self._pos_due, self._pos_why = now_ms() + 60_000, why
+            return False
         finally:
             self._pos_posting = False
 
+    async def _maybe_daily_positions(self, n):
+        """매일 정한 시각(기본 08:50 · POSITIONS_TIME)에 #현재포지션을 한 번 — 바뀐 것이 없어도. 못 올렸으면 1분 뒤 다시,
+        그 시각에서 POS_DAILY_LATE_MIN 분이 지나면 그날은 건너뜀 (폰이 꺼져 있던 날)."""
+        at = (getattr(self, "cfg", None) or {}).get("positions_time", (8, 50))
+        if not at or not self.d.has("positions") or n < getattr(self, "_pos_daily_next", 0):
+            return
+        t = fmt.kst(n)
+        late = t.hour * 60 + t.minute - (at[0] * 60 + at[1])
+        if self.state.get("positions_daily") == t.date().isoformat() or not 0 <= late < POS_DAILY_LATE_MIN:
+            return
+        self._pos_daily_next = n + 60_000
+        if await self._post_positions("daily"):
+            self.state["positions_daily"] = t.date().isoformat()
+            store.save_state(self.state)
+
     # ------------------------------------------------------------------ 주인장 수익률
     async def equity_usd(self):
-        """지금 자산(달러) = 선물 증거금 합계(지갑 잔고 + 미실현 손익) + 현물 지갑 + 펀딩 지갑. 코인은 USDT 짝 시세로 매기고,
-        Earn 의 LD 자산(LDUSDT · LDBTC …)은 바탕 코인 값으로, 값을 못 매기는 것은 뺌. 펀딩 지갑을 못 읽으면 빼고 계속함."""
-        total = dec((await self.b.account()).get("totalMarginBalance"))
+        """지금 자산(달러) = 선물 지갑 + 현물 지갑 + Earn(자유 · 기간 고정) + 펀딩 지갑. 코인은 USDT 짝 시세로 매기고, 값을 못 매기는 것은 뺌.
+        선물 지갑은 자산마다 증거금 잔고(지갑 잔고 + 미실현 손익) — 수수료용 BNB 같은 코인도 그 값으로(코인별 잔고가 없으면 증거금 합계).
+        현물 쪽은 #현재포지션과 같은 방법(SpotFeed.wallets)으로 읽어 Earn 으로 옮긴 코인도 셈 (10/22: 현물 지갑만 읽으면 빠짐)."""
+        account = await self.b.account()
+        if account.get("assets"):
+            total = ZERO
+            for a in account["assets"]:
+                q = dec(a.get("marginBalance"))
+                if q:
+                    total += q * (Decimal(1) if a.get("asset") in USD_ASSETS else await self._usd_price(a.get("asset")) or ZERO)
+        else:
+            total = dec(account.get("totalMarginBalance"))
+        if getattr(self, "spot", None):
+            w = await self.spot.wallets()
+            for name in ("spot", "earn", "funding"):
+                total += await self._wallet_usd(w[name])
+            return total
         total += await self._wallet_usd(await self.b.spot_balances())
         try:
             total += await self._wallet_usd(await self.b.funding_balances())

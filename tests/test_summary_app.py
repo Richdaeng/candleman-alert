@@ -299,42 +299,81 @@ class PositionsChannelTest(unittest.TestCase):
 
     def test_posts_only_when_positions_change(self):
         app = self.make()
-        asyncio.run(app._post_positions_if_changed())
+        asyncio.run(app._post_positions())
         (text, embeds), = self.posted(app)
         self.assertTrue(text.startswith("📌 **운영자 포지션** · "))
         self.assertEqual(embeds[0]["title"], "🟢 한국 주식 ETF(EWY) · 롱")
         self.assertIn("평균 가격 **$152.83**", embeds[0]["description"])
         self.assertIn("실제 레버리지 **0.8배**", embeds[0]["description"])
         app.b.pos[0].update(markPrice="160", unRealizedProfit="140")           # 가격 · 손익만 바뀐 것은
-        asyncio.run(app._post_positions_if_changed())
+        asyncio.run(app._post_positions())
         self.assertEqual(self.posted(app), [])                                   # 다시 올리지 않음
         app.b.pos[0]["positionAmt"] = "30"                                       # 수량이 바뀌면 새 글
-        asyncio.run(app._post_positions_if_changed())
+        asyncio.run(app._post_positions())
         (_, embeds), = self.posted(app)
         self.assertIn("수량 **30주**", embeds[0]["description"])
         app.b.pos = []                                                           # 다 정리하면 '없음' 글
-        asyncio.run(app._post_positions_if_changed())
+        asyncio.run(app._post_positions())
         (text, embeds), = self.posted(app)
         self.assertTrue(text.startswith("📌 운영자는 지금 들고 있는 포지션이 없음"))
         self.assertEqual(embeds, [])
 
     def test_no_repost_after_restart_when_unchanged(self):
         app = self.make()
-        asyncio.run(app._post_positions_if_changed())
+        asyncio.run(app._post_positions())
         self.assertEqual(len(self.posted(app)), 1)
         again = self.make()
         again.state = self.store.load_state()                                    # 다시 켠 프로그램
-        asyncio.run(again._post_positions_if_changed())
+        asyncio.run(again._post_positions())
         self.assertEqual(self.posted(again), [])
+
+    def test_daily_post_at_0850_once(self):
+        """매일 08:50 — 바뀐 것이 없어도 한 번 (10/22 댕이). 못 올렸으면 1분 뒤 다시, 한 시간이 지나면 그날은 건너뜀."""
+        app = self.make()
+        asyncio.run(app._post_positions())
+        self.posted(app)                                                         # 거래 뒤에 올린 글 (지난 글)
+        for t in (ms(2026, 10, 22, 8, 49), ms(2026, 10, 22, 8, 50), ms(2026, 10, 22, 8, 55)):
+            app._pos_daily_next = 0
+            asyncio.run(app._maybe_daily_positions(t))
+        (text, _), = self.posted(app)                                            # 08:49 는 아직 · 08:55 는 이미 올림
+        self.assertTrue(text.startswith("📌 **운영자 포지션**"))
+        ok = app.b.positions
+
+        async def down():
+            raise ConnectionError("바이낸스에 연결하지 못함")
+        app.b.positions = down
+        asyncio.run(app._maybe_daily_positions(ms(2026, 10, 23, 8, 50)))
+        app.b.positions = ok
+        asyncio.run(app._maybe_daily_positions(ms(2026, 10, 23, 8, 50) + 30_000))   # 1분 안에는 다시 묻지 않음
+        self.assertEqual(self.posted(app), [])
+        asyncio.run(app._maybe_daily_positions(ms(2026, 10, 23, 8, 51) + 1000))
+        self.assertEqual(len(self.posted(app)), 1)
+        app._pos_daily_next = 0
+        asyncio.run(app._maybe_daily_positions(ms(2026, 10, 24, 9, 50)))         # 한 시간이 지남 (폰이 꺼져 있던 날)
+        self.assertEqual(self.posted(app), [])
+        app.cfg = {"positions_time": None}                                         # POSITIONS_TIME=off
+        asyncio.run(app._maybe_daily_positions(ms(2026, 10, 25, 8, 50)))
+        self.assertEqual(self.posted(app), [])
 
     def test_off_without_webhook_and_fill_schedules_check(self):
         app = self.make({"trade": "u1", "summary": "u2", "status": "u3"})
-        asyncio.run(app._post_positions_if_changed())
+        asyncio.run(app._post_positions())
         self.assertEqual(app.b.asked, 0)                                         # 웹후크가 없으면 바이낸스에 묻지도 않음
         app._pos_cache, app._pos_due = ("옛 값",), None
         asyncio.run(app.emit([], [{"kind": "fill", "t": 1, "effect": "add", "symbol": "EWYUSDT"}]))
         self.assertIsNone(app._pos_cache)                                        # /포지션도 새 값으로
         self.assertIsNotNone(app._pos_due)                                       # 잠시 뒤 #현재포지션 확인
+
+
+class ClockConfigTest(unittest.TestCase):
+    def test_positions_time(self):
+        from candleman import config
+        self.assertEqual(config._clock({}, "POSITIONS_TIME", "08:50"), (8, 50))
+        self.assertEqual(config._clock({"POSITIONS_TIME": "21:05"}, "POSITIONS_TIME", "08:50"), (21, 5))
+        self.assertIsNone(config._clock({"POSITIONS_TIME": "off"}, "POSITIONS_TIME", "08:50"))
+        for bad in ("8", "25:00", "08:50:00", "아침"):
+            with self.assertRaises(config.ConfigError):
+                config._clock({"POSITIONS_TIME": bad}, "POSITIONS_TIME", "08:50")
 
 
 class ReturnTest(unittest.TestCase):
@@ -385,6 +424,45 @@ class ReturnTest(unittest.TestCase):
         self.assertEqual(summary.return_text(2026, D("7800"), D("7800"), "10/21 20:00").split("\n")[-1], "수익률: 0.00% ($0.00)")
         self.assertEqual(summary.return_text(2027, D("9100"), D("9282"), "01/05 09:00", "01/01 00:00 전체 자산").split("\n")[:2], [
             "📊 2027 주인장 수익률 · 01/05 09:00 기준", "시작: $9,100.00 (01/01 00:00 전체 자산)"])
+
+    def test_equity_counts_earn_and_futures_coins(self):
+        """10/22: 현물 지갑 밖(Earn · 선물 지갑의 수수료용 BNB)에 둔 코인도 지금 자산에."""
+        from candleman.app import App
+        from candleman.binance import BinanceError
+        from candleman.spotfeed import SpotFeed
+
+        class FB:
+            async def account(self):
+                return {"totalMarginBalance": "4990", "assets": [
+                    {"asset": "USDT", "walletBalance": "4900", "marginBalance": "4880"},       # 미실현 −$20 포함
+                    {"asset": "BNB", "walletBalance": "0.2", "marginBalance": "0.2"},
+                    {"asset": "USDC", "walletBalance": "0", "marginBalance": "0"}]}
+
+            async def spot_balances(self):
+                return {"USDT": D("1000"), "BTC": D("0.01"), "LDSOL": D("10")}
+
+            async def earn_flexible(self):
+                return {"SOL": D("10")}
+
+            async def earn_locked(self):
+                return {"BNB": D("1")}
+
+            async def funding_balances(self):
+                return {"USDT": D("50")}
+
+            async def futures_wallet(self):
+                return {"BNB": D("0.2"), "USDT": D("4900")}
+
+            async def spot_price(self, symbol):
+                prices = {"BTCUSDT": "80000", "BNBUSDT": "600", "SOLUSDT": "150"}
+                if symbol not in prices:
+                    raise BinanceError(400, -1121, "Invalid symbol.")
+                return prices[symbol]
+        app = App.__new__(App)
+        app.b, app.state = FB(), {}
+        app.spot = SpotFeed(app)
+        # 선물 4,880 + BNB 0.2 × 600 · 현물 1,000 + 800 · Earn SOL 1,500 + BNB 600 (LDSOL 은 두 번 세지 않음) · 펀딩 50
+        self.assertEqual(asyncio.run(app.equity_usd()), D("8950"))
 
     def test_new_year_takes_whole_account_as_base(self):
         app = self.make()

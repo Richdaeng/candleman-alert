@@ -142,9 +142,28 @@ class FakeBinance:
         self.trades = {"BTCUSDT": [trade(1, 10, True, "0.05", "4000"), trade(2, 11, True, "0.05", "4200")],
                        "SOLUSDT": [trade(5, 20, True, "1", "140", symbol="SOLUSDT")]}
         self.trade_calls = []
+        self.flexible, self.locked, self.funding, self.futures = {}, {}, {}, {}   # Earn · 펀딩 · 선물 지갑 (오류를 넣으면 그 오류)
 
     async def spot_balances(self):
         return dict(self.balances)
+
+    @staticmethod
+    def _give(v):
+        if isinstance(v, Exception):
+            raise v
+        return dict(v)
+
+    async def earn_flexible(self):
+        return self._give(self.flexible)
+
+    async def earn_locked(self):
+        return self._give(self.locked)
+
+    async def funding_balances(self):
+        return self._give(self.funding)
+
+    async def futures_wallet(self):
+        return self._give(self.futures)
 
     async def spot_price(self, symbol):
         if symbol not in self.prices:
@@ -179,6 +198,36 @@ class FeedTest(unittest.TestCase):
         btc, sol = shown
         self.assertEqual(btc["avg"], D("82000"))                                   # 0.05 BTC 를 $80,000 · $84,000 에 산 평균
         self.assertIsNone(sol["avg"])                                              # 1 SOL 만 산 값을 앎 (지금 2 SOL · 입금 등) → 모름
+
+    def test_holdings_merge_wallets_and_show_where(self):
+        """10/22: 산 솔라나가 현물 지갑에서 빠져(판 기록 없음) 06:30 글에서 사라짐 · BNB 도 안 보임 → Earn · 펀딩 · 선물 지갑도 셈."""
+        b = self.app.b
+        b.balances = {"USDT": D("500"), "SOL": D("0.0001"), "LDSOL": D("27.7"), "LDO": D("20")}   # LDO 는 진짜 코인(리도)
+        b.prices["LDOUSDT"] = "1"
+        b.flexible = {"SOL": D("27.7"), "USDC": D("100")}
+        b.locked, b.funding, b.futures = {"BNB": D("0.5")}, {"BNB": D("0.1")}, {"BNB": D("0.2"), "USDT": D("3000")}
+        rows, shown = asyncio.run(self.feed.holdings(with_avg=False))
+        self.assertEqual([r["asset"] for r in shown], ["SOL", "BNB", "LDO"])        # 달러 코인(USDT · USDC)은 빠짐
+        sol, bnb, ldo = shown
+        self.assertEqual(sol["qty"], D("27.7001"))                                  # LDSOL 은 Earn 을 읽었으니 두 번 세지 않음
+        self.assertEqual(bnb["qty"], D("0.8"))
+        self.assertEqual(summary.where_text(sol), "Earn 예치")                      # $1 어치도 안 되는 현물 지갑 찌꺼기는 뺌
+        self.assertEqual(summary.where_text(bnb), "Earn 예치 0.5 BNB + 펀딩 지갑 0.1 BNB + 선물 지갑 0.2 BNB")
+        self.assertIsNone(summary.where_text(ldo))                                  # 현물 지갑에만 있으면 '보관' 줄 없음
+
+    def test_refused_wallet_is_skipped_and_ld_assets_count_instead(self):
+        b = self.app.b
+        b.balances = {"LDSOL": D("27.7"), "LDUSDT": D("50")}
+        b.flexible = BinanceError(401, -2015, "Invalid API-key, IP, or permissions for action.")
+        _, shown = asyncio.run(self.feed.holdings(with_avg=False))
+        self.assertEqual([(r["asset"], r["qty"], r["where"]) for r in shown], [("SOL", D("27.7"), {"earn": D("27.7")})])
+        self.assertIn("Earn 자유 예치", self.feed.off)                               # 이번 실행 동안은 다시 묻지 않음
+        b.flexible = ConnectionError("바이낸스에 연결하지 못함")
+        asyncio.run(self.feed.holdings(with_avg=False))
+        other = SpotFeed(self.app)                                                  # 인터넷 문제는 빼지 않고 그대로 올려 보냄 (조금 뒤 다시)
+        with self.assertRaises(ConnectionError):
+            asyncio.run(other.holdings(with_avg=False))
+        self.assertEqual(other.off, set())
 
     def test_sell_pnl_uses_trades_before_this_order(self):
         self.app.b.trades["BTCUSDT"].append(trade(3, 12, False, "0.04", "3320", fee="3.32"))
@@ -272,6 +321,14 @@ class SpotCardsTest(unittest.TestCase):
         self.assertTrue(only_spot["content"].startswith("📌 **운영자 포지션**"))        # 선물이 없어도 현물만으로 글
         self.assertEqual(len(only_spot["embeds"]), 1)
 
+    def test_card_says_where_coin_is_kept(self):
+        sol = {"asset": "SOL", "qty": D("27.716256"), "price": D("107.04"), "value": D("2966.75"), "avg": D("107.18"),
+               "where": {"spot": D("0.000256"), "earn": D("27.716")}}
+        card, = summary.positions_message([], None, "10/22 08:50", [sol])["embeds"]
+        self.assertEqual(card["description"].split("\n")[:2], ["수량 **27.716256 SOL**", "보관 **Earn 예치**"])
+        line = summary.holding_lines([], [sol])[1]
+        self.assertTrue(line.endswith(" · 보관 Earn 예치"))                           # 하루 요약의 '들고 있는 포지션' 줄도
+
 
 class PositionsWithSpotTest(unittest.TestCase):
     """#현재포지션 — 현물 수량이 바뀌어도 새 글, 가격만 바뀌면 안 올림."""
@@ -308,14 +365,52 @@ class PositionsWithSpotTest(unittest.TestCase):
                 if ch == "positions":
                     out.append([e["title"] for e in embeds])
             return out
-        asyncio.run(app._post_positions_if_changed())
+        asyncio.run(app._post_positions())
         self.assertEqual(posted(), [["🪙 비트코인(BTC) · 현물", "🪙 솔라나(SOL) · 현물"]])
         fb.prices["BTCUSDT"] = "90000"                                             # 가격만 바뀜
-        asyncio.run(app._post_positions_if_changed())
+        asyncio.run(app._post_positions())
         self.assertEqual(posted(), [])
         fb.balances["BTC"] = D("0.08")                                             # 현물을 더 삼
-        asyncio.run(app._post_positions_if_changed())
+        asyncio.run(app._post_positions())
         self.assertEqual(len(posted()), 1)
+
+    def test_checks_ignore_spot_only_changes(self):
+        """다시 켬 · 끊김 · 10분 점검은 선물 포지션이 바뀔 때만 (10/22 06:30 에 체결 없이 올라간 글) · 08:50 정시 글은 늘."""
+        from candleman.app import App
+        from candleman.discord import Discord
+        fb, fut = FakeBinance(), []
+
+        async def positions():
+            return [dict(p) for p in fut]
+
+        async def account():
+            return {"totalMarginBalance": "1000"}
+        fb.positions, fb.account = positions, account
+        app = App.__new__(App)
+        app.b, app.state, app._pos_due = fb, {}, None
+        app.d = Discord({"trade": "u1", "status": "u3", "positions": "u5"})
+        app.spot = SpotFeed(app)
+
+        def count():
+            n = 0
+            while not app.d.q.empty():
+                n += app.d.q.get_nowait()[0] == "positions"
+            return n
+        asyncio.run(app._post_positions("check"))
+        self.assertEqual(count(), 1)                                               # 처음엔 올림 (지난 글이 없음)
+        fb.balances.pop("SOL")
+        fb.flexible = {"SOL": D("2")}                                              # 체결 없이 솔라나가 Earn 으로 옮겨짐
+        fb.balances["ETH"] = D("1")                                                # 에어드랍 등 체결 없이 늘어난 코인
+        asyncio.run(app._post_positions("check"))
+        self.assertEqual(count(), 0)
+        fut.append({"symbol": "EWYUSDT", "positionAmt": "20", "entryPrice": "152.83", "markPrice": "155", "notional": "3100",
+                    "unRealizedProfit": "12.5", "isolatedMargin": "0", "positionSide": "BOTH"})   # 놓친 선물 체결
+        asyncio.run(app._post_positions("check"))
+        self.assertEqual(count(), 1)
+        asyncio.run(app._post_positions("daily"))                                  # 정시 글은 바뀐 것이 없어도
+        self.assertEqual(count(), 1)
+        asyncio.run(app._post_positions("fill"))                                   # 체결 뒤인데 바뀐 것이 없으면 안 올림
+        self.assertEqual(count(), 0)
 
 
 class RecvAliveTest(unittest.TestCase):

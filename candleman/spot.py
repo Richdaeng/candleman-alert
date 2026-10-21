@@ -16,6 +16,7 @@ PENDING_DELAY_MS = 2000       # 걸어 둔 주문 알림을 이만큼 늦게 —
 PARTIAL_GATHER_MS = 5000      # 다 체결되지 않은 주문의 체결은 이만큼 조용해지면 모아서 한 번에
 DUST_USD = Decimal("1")       # 이보다 적게 남으면 '모두 매도'로 봄 (수수료 찌꺼기)
 SHOW_USD = Decimal("10")      # #현재포지션 · /포지션에 보이는 현물 (USDT 는 뺌 · 2026-10-21 댕이 결정)
+CASH = USD_ASSETS + ("TUSD", "DAI", "USDE", "USD1", "BFUSD", "USDP", "PYUSD", "RLUSD")   # 보유 카드에서 빼는 달러 코인 (현금과 같음)
 SPOT_QUOTES = ("USDT", "USDC", "FDUSD", "BUSD", "TUSD", "DAI", "BTC", "ETH", "BNB", "EUR", "TRY", "BRL", "JPY")
 CONDITIONAL = ("STOP_LOSS", "STOP_LOSS_LIMIT", "TAKE_PROFIT", "TAKE_PROFIT_LIMIT")
 ENDED = {"CANCELED": "취소", "EXPIRED": "만료", "EXPIRED_IN_MATCH": "만료", "REJECTED": "거부", "TRADE_PREVENTION": "만료"}

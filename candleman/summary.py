@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 from . import fmt, names
 from .fmt import KST, ZERO, dec
+from .spot import DUST_USD
 from .tracker import USD_ASSETS, base_of
 
 
@@ -38,6 +39,22 @@ def _sum_usd(rows, bnb_price):
 CARD_LONG, CARD_SHORT, CARD_REST = 2533018, 15684432, 9807270    # 카드 왼쪽 띠 색 — 캔들 사진의 초록 · 빨강, 나머지는 회색
 CARD_SPOT = 15776011                                               # 현물 카드는 바이낸스 노랑
 MAX_CARDS = 10                                                     # 디스코드 글 하나에 카드(embed)는 10장까지
+WALLETS = (("spot", "현물 지갑"), ("earn", "Earn 예치"), ("funding", "펀딩 지갑"), ("futures", "선물 지갑"))   # 코인을 둔 곳 (SpotFeed.wallets)
+
+
+def where_text(r):
+    """현물 코인을 둔 곳 — 현물 지갑에만 있으면 None. 한 곳이면 'Earn 예치', 여러 곳이면 '현물 지갑 2 SOL + Earn 예치 25.7 SOL'.
+    $1 어치도 안 되는 찌꺼기는 셈에서 뺌."""
+    where, price, parts = r.get("where") or {}, dec(r.get("price")), []
+    for key, word in WALLETS:
+        q = dec(where.get(key))
+        if q > 0 and q * price >= DUST_USD:
+            parts.append((word, q))
+    if not parts or [w for w, _ in parts] == ["현물 지갑"]:
+        return None
+    if len(parts) == 1:
+        return parts[0][0]
+    return " + ".join("%s %s" % (w, names.amount(q, r["asset"])) for w, q in parts)
 
 
 def _basics(p):
@@ -83,6 +100,8 @@ def positions_message(positions, equity, when, spot=None):
     for r in spot:
         avg = r.get("avg")
         lines = ["수량 **%s**" % names.amount(r["qty"], r["asset"])]
+        if where_text(r):
+            lines.append("보관 **%s**" % where_text(r))
         if avg is not None:
             lines.append("평균 매수가 **%s**" % fmt.price2(avg))
         lines += ["지금 가격 **%s**" % fmt.price2(r["price"]), "평가 금액 **%s**" % fmt.usd(r["value"])]
@@ -125,6 +144,8 @@ def holding_lines(positions, spot_rows):
         parts = (["평균 매수가 %s" % fmt.price2(avg)] if avg is not None else []) + ["약 %s어치" % fmt.usd_about(r["value"])]
         if avg is not None:
             parts.append("미실현 %s" % fmt.usd((dec(r["price"]) - dec(avg)) * dec(r["qty"]), sign=True))
+        if where_text(r):
+            parts.append("보관 %s" % where_text(r))
         out += ["🪙 **%s 현물** · %s" % (names.label(r["asset"]), names.amount(r["qty"], r["asset"])), "└ " + " · ".join(parts)]
     return out
 
