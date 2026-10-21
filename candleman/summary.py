@@ -107,12 +107,14 @@ def positions_message(positions, equity, when, spot=None):
     return {"content": head, "embeds": cards}
 
 
-def return_text(start, equity, when):
+def return_text(year, start, equity, when, start_note=None):
     """주인장 수익률 글 — 포지션을 끝낼 때 #실시간-매매에 붙는 글과 /주인장수익률 답이 같은 글(10/21 댕이: "시작 7800달러,
-    현재 X달러, 수익률 n%"). 현재 = 선물 · 현물 · 펀딩 지갑을 합친 지금 자산. 폰 알림에 별표가 보여 굵은 글씨는 안 씀."""
+    현재 X달러, 수익률 n%" · "2026 주인장 수익률"). 해마다 따로 셈: 시작 = 그해 기준(첫해는 정해 둔 금액, 다음 해부터는
+    1월 1일 0시의 전체 자산 — start_note 에 언제 잡았는지). 현재 = 선물 · 현물 · 펀딩 지갑을 합친 지금 자산.
+    폰 알림에 별표가 보여 굵은 글씨는 안 씀."""
     start, equity = dec(start), dec(equity)
-    return "\n".join(["📊 주인장 수익률 · %s 기준" % when,
-                      "시작: %s" % fmt.usd(start),
+    return "\n".join(["📊 %d 주인장 수익률 · %s 기준" % (year, when),
+                      "시작: %s" % fmt.usd(start) + (" (%s)" % start_note if start_note else ""),
                       "현재: %s" % fmt.usd(equity),
                       "수익률: %s (%s)" % (fmt.pct((equity - start) / start * 100), fmt.usd(equity - start, sign=True))])
 

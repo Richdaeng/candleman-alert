@@ -3,6 +3,7 @@ import asyncio
 import os
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime
 from decimal import Decimal as D
@@ -355,14 +356,37 @@ class ReturnTest(unittest.TestCase):
                 return "80000"
         app = App.__new__(App)
         app.b, app.d, app.state, app.start_usd = FB(), FakeDiscord(), {}, start
+        app.start_year = self.year = fmt.kst(int(time.time() * 1000)).year      # 시험이 실제 연도에 매이지 않게 (폰은 해마다 시험을 다시 돌림)
         app._pos_cache = app._pos_due = app._ret_due = app._ret_cache = None
+        app._year_next = 0
         return app
 
     def test_text(self):
-        self.assertEqual(summary.return_text(D("7800"), D("8123.454"), "10/21 20:00").split("\n"), [
-            "📊 주인장 수익률 · 10/21 20:00 기준", "시작: $7,800.00", "현재: $8,123.45", "수익률: +4.15% (+$323.45)"])
-        self.assertEqual(summary.return_text(D("7800"), D("7620.6"), "10/21 20:00").split("\n")[-1], "수익률: −2.30% (−$179.40)")
-        self.assertEqual(summary.return_text(D("7800"), D("7800"), "10/21 20:00").split("\n")[-1], "수익률: 0.00% ($0.00)")
+        self.assertEqual(summary.return_text(2026, D("7800"), D("8123.454"), "10/21 20:00").split("\n"), [
+            "📊 2026 주인장 수익률 · 10/21 20:00 기준", "시작: $7,800.00", "현재: $8,123.45", "수익률: +4.15% (+$323.45)"])
+        self.assertEqual(summary.return_text(2026, D("7800"), D("7620.6"), "10/21 20:00").split("\n")[-1], "수익률: −2.30% (−$179.40)")
+        self.assertEqual(summary.return_text(2026, D("7800"), D("7800"), "10/21 20:00").split("\n")[-1], "수익률: 0.00% ($0.00)")
+        self.assertEqual(summary.return_text(2027, D("9100"), D("9282"), "01/05 09:00", "01/01 00:00 전체 자산").split("\n")[:2], [
+            "📊 2027 주인장 수익률 · 01/05 09:00 기준", "시작: $9,100.00 (01/01 00:00 전체 자산)"])
+
+    def test_new_year_takes_whole_account_as_base(self):
+        app = self.make()
+        app.start_year = 2026
+        self.assertEqual(app._year_base(2026), (D("7800"), None))               # 2026년은 처음 시작한 금액
+        self.assertIsNone(app._year_base(2027))
+        new_year = ms(2027, 1, 1, 0, 0) + 20_000
+        asyncio.run(app._maybe_new_year(new_year))
+        self.assertEqual(app._year_base(2027), (D("7130"), new_year))           # 1월 1일 0시의 전체 자산
+        self.assertEqual(app.d.sent, [("status", "📅 2027 주인장 수익률 새 기준: $7,130.00 (01/01 00:00 바이낸스 전체 자산)")])
+        asyncio.run(app._maybe_new_year(new_year + 60_000))
+        self.assertEqual(len(app.d.sent), 1)                                    # 한 해에 한 번
+        self.assertEqual(self.store.load_state()["year_start"]["2027"]["usd"], "7130")   # 다시 켜도 그대로
+
+    def test_new_year_taken_late_says_so(self):
+        app = self.make()
+        app.start_year = 2026
+        asyncio.run(app._maybe_new_year(ms(2027, 1, 3, 10, 0)))
+        self.assertTrue(app.d.sent[0][1].endswith("· 1월 1일에 꺼져 있어서 지금 값으로 잡음"))
 
     def test_equity_counts_futures_spot_and_funding(self):
         # 선물 5,000 + 현물 USDT 1,000 + BTC 0.01 × 80,000 + Earn LDUSDT 200 + LDBTC 0.001 × 80,000 + 펀딩 50 (XYZ 는 값을 못 매겨 뺌)
@@ -379,7 +403,7 @@ class ReturnTest(unittest.TestCase):
         (ch, text), = app.d.sent
         self.assertEqual(ch, "trade")
         lines = text.split("\n")
-        self.assertTrue(lines[0].startswith("📊 주인장 수익률 · "))
+        self.assertTrue(lines[0].startswith("📊 %d 주인장 수익률 · " % self.year))
         self.assertEqual(lines[1:], ["시작: $7,800.00", "현재: $7,130.00", "수익률: −8.59% (−$670.00)"])
 
     def test_off_without_start(self):

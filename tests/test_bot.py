@@ -166,7 +166,7 @@ class ReturnApp(FakeApp):
     async def return_message(self):
         if self.fail:
             raise ConnectionError("바이낸스에 연결하지 못함")
-        return {"content": "📊 주인장 수익률 · 10/21 20:00 기준\n시작: $7,800.00\n현재: $8,123.45\n수익률: +4.15% (+$323.45)", "embeds": []}
+        return {"content": "📊 2026 주인장 수익률 · 10/21 20:00 기준\n시작: $7,800.00\n현재: $8,123.45\n수익률: +4.15% (+$323.45)", "embeds": []}
 
 
 class ReturnCommandTest(BotCase):
@@ -186,7 +186,7 @@ class ReturnCommandTest(BotCase):
         d["data"]["name"] = "주인장수익률"
         calls = self.run_one(d)
         self.assertEqual(calls[0][2], {"type": 5})
-        self.assertEqual(calls[1][2]["content"].split("\n"), ["📊 주인장 수익률 · 10/21 20:00 기준", "시작: $7,800.00",
+        self.assertEqual(calls[1][2]["content"].split("\n"), ["📊 2026 주인장 수익률 · 10/21 20:00 기준", "시작: $7,800.00",
                                                              "현재: $8,123.45", "수익률: +4.15% (+$323.45)"])
         self.assertEqual(self.app.asked, 0)                                  # /포지션 쪽은 묻지 않음
 

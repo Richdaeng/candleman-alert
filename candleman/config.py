@@ -59,7 +59,18 @@ def load(path=ENV_PATH):
             "briefing_hour": _hour(e, "BRIEFING_HOUR", "8"),              # 아침 경제 브리핑 시각
             "briefing_url": e.get("BRIEFING_URL") or None,               # 브리핑 글을 받는 곳 (기본: GitHub candleman-briefing)
             "start_usd": _money(e, "START_USD", "7800"),                  # 수익률 기준 시작 금액 (10/21 댕이: $7,800 으로 시작 · 0 이면 끔)
+            "start_year": _year(e, "START_YEAR", "2026"),                 # 그 금액이 기준인 해. 다음 해부터는 1월 1일 0시의 전체 자산
             "update_hour": _hour(e, "UPDATE_HOUR", "5")}
+
+
+def _year(e, key, default):
+    try:
+        y = int((e.get(key) or default).strip())
+    except ValueError:
+        raise ConfigError("%s 는 연도여야 해요 (예: %s=2026)" % (key, key)) from None
+    if not 2000 <= y <= 2100:
+        raise ConfigError("%s 는 연도여야 해요 (예: %s=2026)" % (key, key))
+    return y
 
 
 def _money(e, key, default):

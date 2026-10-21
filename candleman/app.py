@@ -48,6 +48,8 @@ class App:
         self._pos_due = None                 # 이 시각(ms)이 지나면 #현재포지션을 견줘 봄
         self._pos_posting = False
         self.start_usd = cfg.get("start_usd")   # 주인장 수익률의 시작 금액 (None 이면 수익률 글 · /주인장수익률 없음)
+        self.start_year = cfg.get("start_year") or 2026   # 시작 금액이 기준인 해. 다음 해부터는 1월 1일 0시의 전체 자산
+        self._year_next = 0                  # 새해 기준을 못 잡았을 때 다시 해 볼 시각(ms)
         self._ret_due = None                 # 이 시각(ms)이 지나면 #실시간-매매에 주인장 수익률 (포지션을 끝낸 뒤)
         self._ret_posting = False
         self._ret_cache = None
@@ -274,6 +276,10 @@ class App:
             except Exception as e:
                 store.log("브리핑 오류: %s %s" % (type(e).__name__, str(e)[:160]))
             try:
+                await self._maybe_new_year(n)
+            except Exception as e:
+                store.log("새해 기준 오류: %s %s" % (type(e).__name__, str(e)[:160]))
+            try:
                 start, end = summary.window_for(n, self.hour)
                 if int(self.state.get("last_summary_end") or 0) < end and n - end < LATE_SUMMARY_S * 1000:
                     await self.post_summary(start, end)
@@ -407,13 +413,50 @@ class App:
                 return None
             raise
 
+    def _year_base(self, year):
+        """그해 수익률 기준 (금액, 잡은 때 ms 또는 None). START_YEAR 까지는 START_USD, 그 뒤 해는 1월 1일에 잡아 둔 전체 자산
+        (10/21 댕이: "2027년 1월 1일 바이낸스에 있는 모든 자산을 읽어서 새 기준으로"). 아직 안 잡았으면 None."""
+        if year <= getattr(self, "start_year", 2026):
+            return self.start_usd, None
+        rec = (self.state.get("year_start") or {}).get(str(year))
+        return (dec(rec["usd"]), int(rec["t"])) if rec else None
+
+    async def _take_year_start(self, year, n):
+        """지금 바이낸스 전체 자산을 그해 기준으로 저장하고 #봇-상태에 남김 (1월 1일 0시에 꺼져 있었으면 다시 켜진 때 값)."""
+        usd = await self.equity_usd()
+        self.state.setdefault("year_start", {})[str(year)] = {"usd": fmt.plain(usd), "t": n}
+        store.save_state(self.state)
+        t = fmt.kst(n)
+        late = "" if (t.month, t.day) == (1, 1) else " · 1월 1일에 꺼져 있어서 지금 값으로 잡음"
+        await self.d.put("status", "📅 %d 주인장 수익률 새 기준: %s (%s 바이낸스 전체 자산)%s" % (year, fmt.usd(usd), fmt.kst_text(n), late))
+        return usd, n
+
+    async def _maybe_new_year(self, n):
+        """해가 바뀌면(한국 시간 1월 1일 0시) 그해 기준을 한 번 잡음. 못 잡으면 1분 뒤 다시."""
+        if not getattr(self, "start_usd", None) or n < getattr(self, "_year_next", 0):
+            return
+        year = fmt.kst(n).year
+        if self._year_base(year) is not None:
+            return
+        try:
+            await self._take_year_start(year, n)
+        except NET_ERRORS as e:
+            store.log("새해 기준 잡기 실패 — 1분 뒤 다시: %s" % e)
+            self._year_next = n + 60_000
+
     async def return_message(self):
         """/주인장수익률 답 = 포지션을 끝낼 때 #실시간-매매에 붙는 글. 바이낸스에는 30초에 한 번까지만 물음."""
         now = time.time()
+        year = fmt.kst(int(now * 1000)).year
+        base = self._year_base(year)
+        if base is None:                                  # 새해 기준을 아직 못 잡았으면 지금 잡음
+            base = await self._take_year_start(year, int(now * 1000))
         cache = getattr(self, "_ret_cache", None)
         if not cache or now - cache[0] > 30:
             cache = self._ret_cache = (now, await self.equity_usd())
-        return {"content": summary.return_text(self.start_usd, cache[1], fmt.kst_text(int(cache[0] * 1000))), "embeds": []}
+        start, t = base
+        note = "%s 전체 자산" % fmt.kst_text(t) if t else None
+        return {"content": summary.return_text(year, start, cache[1], fmt.kst_text(int(cache[0] * 1000)), note), "embeds": []}
 
     async def _post_return(self):
         """선물 포지션을 끝내거나(정리 · 방향 바꿈) 현물을 모두 판 뒤 #실시간-매매에 주인장 수익률을 한 번."""
