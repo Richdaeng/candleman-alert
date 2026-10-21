@@ -67,8 +67,9 @@ def test(new, root=HERE, timeout=300):
                                env=dict(os.environ, PYTHONIOENCODING="utf-8"))
         except subprocess.TimeoutExpired:
             return False, "시험이 %d초 넘게 걸림" % timeout
-        lines = ((r.stderr or "") + "\n" + (r.stdout or "")).strip().splitlines()
-        return r.returncode == 0, (lines[-1] if lines else "")
+        lines = [ln.strip() for ln in ((r.stderr or "") + "\n" + (r.stdout or "")).splitlines() if ln.strip()]
+        result = [ln for ln in lines if ln.startswith(("OK", "FAILED"))]     # unittest 의 끝 줄 ('OK' · 'FAILED (failures=1)')
+        return r.returncode == 0, (result or lines or [""])[-1]
     finally:
         _git(root, "worktree", "remove", "--force", path)
         _git(root, "worktree", "prune")
