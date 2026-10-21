@@ -122,12 +122,12 @@ $83,000.00에 0.04 BTC 정리 · 남은 0.06 BTC · 약 $3,320어치 · 바로 �
   점수가 없거나 1~5가 아니면 별 없이 적고, 별이 있을 때만 카드 아래에 별의 뜻을 한 줄 적습니다.
 
 - 숫자는 이 폰이 금융투자협회 종합통계(공개 자료)에서 직접 받습니다. 협회는 전날 수치를 다음 영업일에 올려서 카드 제목에 기준일을 적습니다.
-- 밤사이 소식 · 다가오는 일정은 Claude 클라우드 예약 작업이 매일 07:25에 웹에서 찾아 이 저장소의 `claude/briefing` 가지에 `briefing.json`
+- 밤사이 소식 · 다가오는 일정은 Claude 클라우드 예약 작업(Opus 5.5 · 추론 강도 max)이 매일 06:40에 웹에서 찾아
+  브리핑 전용 저장소 [candleman-briefing](https://github.com/Richdaeng/candleman-briefing)의 `main`에 `briefing.json`
   (`{"date": "YYYY-MM-DD", "overnight": [...], "schedule": [{"when", "what", "impact", "why"}]}`)으로 올려 둔 것을 가져옵니다. 오늘 날짜가 아니면 쓰지 않고,
   줄 수 · 길이를 잘라 짧게 유지합니다. 08:20까지 오지 않으면 숫자만 올리고 `#봇-상태`에 알립니다.
+- 예약 작업에 GitHub 쓰기 권한을 주는 곳은 그 브리핑 저장소뿐입니다. 이 저장소(폰이 매일 05시에 `stable`을 받아 실행하는 코드)에는 쓰지 못하게 따로 뒀습니다.
 - `DISCORD_WEBHOOK_BRIEFING` 를 넣었을 때만 켜집니다(`python -m candleman hook briefing`). 시각은 `BRIEFING_HOUR`, 바로 시험은 `python -m candleman briefing`.
-- 클라우드 작업은 Opus 5.5 로 돌고, 추론 강도는 `.claude/settings.json` 의 `CLAUDE_CODE_EFFORT_LEVEL=max` 로 최대입니다.
-  이 값은 이 폴더에서 여는 Claude Code 세션에도 걸려 `/effort` 로 낮출 수 없으니, 원치 않으면 그 파일을 지우면 됩니다.
 
 글쓴이 이름 · 사진은 프로그램이 정하지 않고 디스코드의 웹후크 설정을 따릅니다(채널 설정 → 연동 → 웹후크에서 바꾸면 바로 반영).
 

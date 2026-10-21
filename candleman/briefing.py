@@ -2,7 +2,8 @@
 
 숫자(신용융자 · 미수금 · 반대매매 · 투자자예탁금)는 이 폰이 금융투자협회 종합통계에서 직접 받고,
 밤사이 소식 · 다가오는 일정은 Claude 클라우드 예약 작업이 매일 아침 웹에서 찾아
-GitHub(claude/briefing 가지의 briefing.json)에 올려 둔 것을 가져와 붙입니다.
+브리핑 전용 저장소(Richdaeng/candleman-briefing 의 briefing.json)에 올려 둔 것을 가져와 붙입니다.
+그 작업은 이 프로그램 저장소에는 쓰지 못하게 따로 둡니다(폰이 stable 을 자동으로 받아 실행하므로).
 웹후크 주소는 이 폰에만 있습니다. 가져온 글은 글자로만 쓰고(실행하지 않음), 줄 수 · 길이를 잘라 짧게 유지합니다.
 협회는 전날 수치를 다음 영업일에 올리므로 카드 제목에 '몇 월 며칠 기준'을 적습니다.
 """
@@ -14,7 +15,7 @@ from . import fmt
 from .fmt import ZERO, dec
 
 KOFIA_URL = "https://freesis.kofia.or.kr/meta/getMetaDataList.do"
-BRIEF_URL = "https://raw.githubusercontent.com/Richdaeng/candleman-alert/refs/heads/claude/briefing/briefing.json"
+BRIEF_URL = "https://raw.githubusercontent.com/Richdaeng/candleman-briefing/refs/heads/main/briefing.json"
 KOFIA_TABLES = {                                   # 표 이름 → TMPV2 부터 차례로 (금액 단위: 백만 원)
     "STATSCU0100000060BO": ["예탁금", "파생예수금", "RP", "미수금", "반대매매", "반대매매비중"],
     "STATSCU0100000070BO": ["신용융자", "신용융자_유가", "신용융자_코스닥"],
