@@ -128,12 +128,29 @@ class SpotFeed:
                     except Exception as e:
                         store.log("현물 손익 계산 실패: %s %s" % (type(e).__name__, str(e)[:160]))
                 await self.app.d.put("trade", fill_text(f, self.t.balances.get(f.base), pnl))
+                fee = None
+                if f.usd:
+                    try:
+                        fee = await self.fee_usd(f)
+                    except Exception as e:
+                        store.log("현물 수수료 환산 실패: %s" % e)
                 store.append([{"kind": "spot_fill", "t": f.t_ms, "oid": f.oid, "symbol": f.symbol, "side": f.side, "qty": str(f.qty),
-                               "quote": str(f.quote_qty), "pnl": None if pnl is None else str(pnl)}])
+                               "quote": str(f.quote_qty), "usd": f.usd, "pnl": None if pnl is None else str(pnl),
+                               "fee_usd": None if fee is None else str(fee)}])         # 하루 요약이 이 기록으로 현물을 셈
                 self.app._pos_cache = None                 # /포지션도 새 값으로
                 self.app._pos_due = now_ms() + 3000        # #현재포지션 새 글
             except Exception as e:
                 store.log("현물 체결 글 오류: %s %s" % (type(e).__name__, str(e)[:160]))
+
+    async def fee_usd(self, f):
+        """이 체결의 수수료를 달러로: 짝 화폐로 낸 것 + 산 코인으로 낸 것(체결 가격으로) + BNB 로 낸 것(지금 값으로)."""
+        total = f.fee_quote
+        for asset, amt in f.fees.items():
+            if asset == f.base:
+                total += amt * f.avg
+            elif asset == "BNB":
+                total += amt * (await self.price("BNB") or ZERO)
+        return total
 
     # ------------------------------------------------------------------ 평균 매수가 · 손익
     def _book(self, symbol):

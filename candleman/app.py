@@ -272,14 +272,23 @@ class App:
                 store.log("요약 오류: %s" % e)
 
     async def post_summary(self, start, end):
-        fills = [r for r in store.read_journal(start, end) if r.get("kind") == "fill"]
+        journal = store.read_journal(start, end)
+        fills = [r for r in journal if r.get("kind") == "fill"]
+        spot_fills = [r for r in journal if r.get("kind") == "spot_fill"]
+        spot_rows = []
+        if getattr(self, "spot", None):
+            try:
+                _, spot_rows = await self.spot.holdings()
+            except Exception as e:                            # 현물 보유를 못 받아도 요약은 보냄
+                store.log("요약: 현물 보유 조회 실패: %s" % e)
         realized = await self.b.income("REALIZED_PNL", start, end - 1)
         fees = await self.b.income("COMMISSION", start, end - 1)
         funding = await self.b.income("FUNDING_FEE", start, end - 1)
         positions = await self.b.positions()
         bnb = await self.b.price("BNBUSDT") if any((r.get("asset") == "BNB") for r in fees + funding) else None
         gaps = [(a, b) for a, b in self.state.get("gaps", []) if b > start and a < end]
-        await self.d.put("summary", summary.build_text(start, end, fills, realized, fees, funding, positions, bnb, gaps))
+        await self.d.put("summary", summary.build_text(start, end, fills, realized, fees, funding, positions, bnb, gaps,
+                                                       spot_fills=spot_fills, spot_rows=spot_rows))
 
     async def positions_message(self):
         """/포지션 답 글(머리 한 줄 + 종목 카드). 바이낸스에는 30초에 한 번까지만 물음(연달아 불러도 같은 답)."""

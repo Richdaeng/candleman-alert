@@ -44,6 +44,29 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("거래 없음", empty)
         self.assertIn("03:00~04:30", empty)
 
+    def test_text_with_spot(self):
+        from decimal import Decimal as D
+        s, e = ms(2026, 10, 21, 22), ms(2026, 10, 22, 22)
+        fills = [{"kind": "fill", "key": "o:1"}]
+        spot = [{"kind": "spot_fill", "oid": 7, "side": "BUY", "usd": True, "pnl": None, "fee_usd": "0.41"},
+                {"kind": "spot_fill", "oid": 8, "side": "SELL", "usd": True, "pnl": "36.68", "fee_usd": "3.32"},
+                {"kind": "spot_fill", "oid": 8, "side": "SELL", "usd": True, "pnl": "10", "fee_usd": "1"},        # 같은 주문의 나머지 체결
+                {"kind": "spot_fill", "oid": 9, "side": "SELL", "usd": True, "pnl": None, "fee_usd": "0.5"}]      # 산 값을 모르는 매도
+        rows = [{"asset": "BTC", "qty": D("0.06"), "price": D("83000"), "value": D("4980"), "avg": D("82000")},
+                {"asset": "SOL", "qty": D("2"), "price": D("150"), "value": D("300"), "avg": None}]
+        text = summary.build_text(s, e, fills, [{"income": "212.4", "asset": "USDT"}], [{"income": "-8.1", "asset": "USDT"}], [], [],
+                                  spot_fills=spot, spot_rows=rows)
+        self.assertEqual(text.split("\n")[1:], [
+            "거래 4번 (선물 1번 · 현물 3번)",
+            "실현 손익 +$259.08 (선물 +$212.40 · 현물 +$46.68 · 현물 일부는 산 값을 몰라 뺌)",
+            "미실현 손익 +$60.00 (선물 $0.00 · 현물 +$60.00)",
+            "수수료 −$13.33 (선물 −$8.10 · 현물 −$5.23)",
+            "펀딩비 $0.00",
+            "들고 있는 포지션",
+            "· 비트코인(BTC) 현물 0.06 BTC · 평균 매수가 $82,000.00 · 약 $4,980어치 · 미실현 +$60.00",
+            "· 솔라나(SOL) 현물 2 SOL · 약 $300어치",
+        ])
+
 
 class FakeBinance:
     def __init__(self):

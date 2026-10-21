@@ -1,6 +1,7 @@
 """매일 정해진 시각(기본 22시, 한국 시간)의 요약 글.
 
 보여 주는 것(2026-10-21 댕이 결정): 거래 횟수 · 실현 손익 · 미실현 손익 · 수수료 · 펀딩비 · 들고 있는 포지션.
+현물도 같이 셈(10/21 댕이: "현물도 중요한 거래") — 현물 손익 · 수수료는 체결 때 이 프로그램이 셈해 둔 일지(spot_fill)로.
 금액은 바이낸스 '손익 기록'(income) 으로 세서 프로그램이 잠깐 꺼져 있었어도 맞게 나옵니다.
 거래 횟수만 이 프로그램의 일지로 세므로, 꺼져 있던 동안의 거래는 빠질 수 있어 그때는 한 줄로 알립니다.
 """
@@ -106,25 +107,62 @@ def positions_message(positions, equity, when, spot=None):
     return {"content": head, "embeds": cards}
 
 
-def build_text(start_ms, end_ms, fills, realized_rows, fee_rows, funding_rows, positions, bnb_price=None, gaps=()):
+def spot_lines(rows):
+    """현물 보유 줄 — '· 비트코인(BTC) 현물 0.06 BTC · 평균 매수가 $82,000.00 · 약 $4,980어치 · 미실현 +$60.00'."""
+    out = []
+    for r in rows:
+        avg = r.get("avg")
+        s = "· %s 현물 %s" % (names.label(r["asset"]), names.amount(r["qty"], r["asset"]))
+        if avg is not None:
+            s += " · 평균 매수가 %s" % fmt.price2(avg)
+        s += " · 약 %s어치" % fmt.usd_about(r["value"])
+        if avg is not None:
+            s += " · 미실현 %s" % fmt.usd((dec(r["price"]) - dec(avg)) * dec(r["qty"]), sign=True)
+        out.append(s)
+    return out
+
+
+def _with_parts(total, parts):
+    """'+$248.40 (선물 +$212.40 · 현물 +$36.00)' — 덧붙일 것이 없으면 합계만."""
+    s = fmt.usd(total, sign=True)
+    return s + (" (%s)" % " · ".join(parts) if parts else "")
+
+
+def build_text(start_ms, end_ms, fills, realized_rows, fee_rows, funding_rows, positions, bnb_price=None, gaps=(),
+               spot_fills=(), spot_rows=()):
+    """하루 요약 글. 선물 금액은 바이낸스 손익 기록(income), 현물은 이 프로그램 일지(spot_fill: 체결 때 셈한 손익 · 달러 수수료)와
+    지금 현물 보유(USDT 를 뺀 $10 이상 · spot_rows)로 셈. 현물이 있으면 합계 뒤에 (선물 · 현물)을 나눠 적음."""
     orders = {r.get("key") for r in fills if r.get("kind") == "fill"}
+    spot = [r for r in spot_fills if r.get("kind") == "spot_fill"]
+    spot_orders = {r.get("oid") for r in spot}
+    sells = [r for r in spot if r.get("side") == "SELL" and r.get("usd", True)]
+    spot_real = sum((dec(r["pnl"]) for r in sells if r.get("pnl") is not None), ZERO)
+    spot_fee = -sum((dec(r["fee_usd"]) for r in spot if r.get("fee_usd") is not None), ZERO)     # 낸 돈이라 −
+    known = [r for r in spot_rows if r.get("avg") is not None]
+    spot_unreal = sum(((dec(r["price"]) - dec(r["avg"])) * dec(r["qty"]) for r in known), ZERO)
     realized, _ = _sum_usd(realized_rows, bnb_price)
     fees, fee_conv = _sum_usd(fee_rows, bnb_price)
     funding, _ = _sum_usd(funding_rows, bnb_price)
     unreal = sum((dec(p.get("unRealizedProfit")) for p in positions), ZERO)
+
+    def both(fut, sp, show):
+        return ["선물 %s" % fmt.usd(fut, sign=True), "현물 %s" % fmt.usd(sp, sign=True)] if show else []
+    real_parts = both(realized, spot_real, bool(sells)) + (["현물 일부는 산 값을 몰라 뺌"] if any(r.get("pnl") is None for r in sells) else [])
+    fee_parts = both(fees, spot_fee, bool(spot_fee)) + (["BNB로 낸 것은 지금 값으로 환산"] if fee_conv else [])
+    n = len(orders) + len(spot_orders)
     s, e = fmt.kst(start_ms), fmt.kst(end_ms)
     lines = ["📊 %s 요약 (%s ~ %s)" % (e.strftime("%m/%d"), s.strftime("%m/%d %H:%M"), e.strftime("%m/%d %H:%M")),
-             "거래 %d번" % len(orders) if orders else "거래 없음",
-             "실현 손익 %s" % fmt.usd(realized, sign=True),
-             "미실현 손익 %s" % fmt.usd(unreal, sign=True),
-             "수수료 %s%s" % (fmt.usd(fees, sign=True), " (BNB로 낸 것은 지금 값으로 환산)" if fee_conv else ""),
+             ("거래 %d번" % n + (" (선물 %d번 · 현물 %d번)" % (len(orders), len(spot_orders)) if spot_orders else "")) if n else "거래 없음",
+             "실현 손익 " + _with_parts(realized + spot_real, real_parts),
+             "미실현 손익 " + _with_parts(unreal + spot_unreal, both(unreal, spot_unreal, bool(known))),
+             "수수료 " + _with_parts(fees + spot_fee, fee_parts),
              "펀딩비 %s" % fmt.usd(funding, sign=True)]
-    if positions:
+    if positions or spot_rows:
         lines.append("들고 있는 포지션")
-        lines += position_lines(positions)
+        lines += position_lines(positions) + spot_lines(spot_rows)
     else:
         lines.append("들고 있는 포지션: 없음")
     if gaps:
-        lines.append("※ 프로그램이 꺼져 있던 시간(%s)의 거래는 횟수에서 빠졌을 수 있음. 금액은 바이낸스 기록 기준이라 정확함." %
+        lines.append("※ 프로그램이 꺼져 있던 시간(%s)의 거래는 횟수와 현물 금액에서 빠졌을 수 있음. 선물 금액은 바이낸스 기록 기준이라 정확함." %
                      ", ".join("%s~%s" % (fmt.kst_text(a, False), fmt.kst_text(b, False)) for a, b in gaps))
     return "\n".join(lines)

@@ -222,6 +222,8 @@ class FeedTest(unittest.TestCase):
         self.assertTrue(sent[0][1].startswith("🟠 비트코인(BTC) 현물 일부 매도 · 이익 +$36.68\n$83,000.00에 0.04 BTC 정리 · 남은 0.06 BTC"))
         self.assertIsNone(self.app._pos_cache)                                     # /포지션도 새 값으로
         self.assertIsNotNone(self.app._pos_due)                                    # #현재포지션 새 글
+        rec, = [r for r in store.read_journal(0, 10 ** 15) if r.get("kind") == "spot_fill"]   # 하루 요약이 쓰는 기록
+        self.assertEqual((rec["pnl"], rec["fee_usd"], rec["usd"]), ("36.68", "3.32", True))
 
 
 class SpotCardsTest(unittest.TestCase):
