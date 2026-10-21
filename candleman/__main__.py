@@ -4,6 +4,7 @@
   python -m candleman check    설정 · 키 권한 · 웹후크를 시험 (#봇-상태에 시험 글 하나)
   python -m candleman demo     가짜 체결로 알림 글이 어떻게 보이는지 화면에만 (인터넷 안 씀)
   python -m candleman summary  지난 요약 구간의 요약을 지금 #일일-요약에 보냄
+  python -m candleman hook symbols   웹후크 주소 하나만 넣거나 바꿈 (symbols = #종목설명 · trade · summary · status)
 """
 import asyncio
 import sys
@@ -87,7 +88,6 @@ def _demo():
 
 def _setup():
     import getpass
-    import os
     print("캔들맨 알림 설정 — 값은 이 폰의 .env 파일에만 저장돼요 (나만 읽기 권한).")
     print("붙여 넣기: 화면을 길게 누르면 '붙여넣기'가 나와요. 비밀키는 붙여 넣어도 화면에 안 보여요.")
     vals = {}
@@ -96,14 +96,49 @@ def _setup():
     vals["DISCORD_WEBHOOK_TRADE"] = input("#실시간-매매 웹후크 주소: ").strip()
     vals["DISCORD_WEBHOOK_SUMMARY"] = input("#일일-요약 웹후크 주소 (같으면 그냥 Enter): ").strip()
     vals["DISCORD_WEBHOOK_STATUS"] = input("#봇-상태 웹후크 주소 (같으면 그냥 Enter): ").strip()
+    vals["DISCORD_WEBHOOK_SYMBOLS"] = input("#종목설명 웹후크 주소 (없으면 그냥 Enter — 새 종목 자동 소개를 안 씀): ").strip()
     hour = input("요약 시각 (0~23, 그냥 Enter 면 22): ").strip() or "22"
     vals["SUMMARY_HOUR"] = hour
     lines = ["# 캔들맨 알림 설정 — 이 파일은 저장소에 올리지 않아요 (.gitignore)"] + ["%s=%s" % (k, v) for k, v in vals.items() if v]
-    fd = os.open(config.ENV_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+    _write_env(lines)
     print("저장했어요: %s" % config.ENV_PATH)
     print("이제 python -m candleman check 로 시험해 보세요.")
+
+
+HOOK_KEYS = {"trade": ("DISCORD_WEBHOOK_TRADE", "#실시간-매매"), "summary": ("DISCORD_WEBHOOK_SUMMARY", "#일일-요약"),
+             "status": ("DISCORD_WEBHOOK_STATUS", "#봇-상태"), "symbols": ("DISCORD_WEBHOOK_SYMBOLS", "#종목설명")}
+
+
+def _write_env(lines):
+    """나만 읽기 권한(600)으로, 반쯤 쓰다 멈춰도 원래 파일이 깨지지 않게 새 파일에 쓴 뒤 바꿔 끼움."""
+    import os
+    tmp = config.ENV_PATH + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    os.replace(tmp, config.ENV_PATH)
+
+
+def _set_hook(name):
+    """setup 을 처음부터 다시 하지 않고 웹후크 주소 하나만 넣거나 바꿈."""
+    import os
+    if name not in HOOK_KEYS:
+        print("어느 채널인지 붙여 주세요: " + " · ".join(HOOK_KEYS))
+        return 1
+    if not os.path.exists(config.ENV_PATH):
+        print("설정 파일이 아직 없어요. 먼저 python -m candleman setup")
+        return 1
+    key, ch = HOOK_KEYS[name]
+    url = input("%s 웹후크 주소: " % ch).strip()
+    if not url.startswith(config.WEBHOOK_PREFIXES):
+        print("디스코드 웹후크 주소가 아니에요 (https://discord.com/api/webhooks/ 로 시작해야 함)")
+        return 1
+    with open(config.ENV_PATH, encoding="utf-8") as f:
+        lines = [ln.rstrip("\n") for ln in f]
+    lines = [ln for ln in lines if not ln.strip().startswith(key + "=")] + ["%s=%s" % (key, url)]
+    _write_env(lines)
+    print("저장했어요: %s 웹후크. 돌고 있는 중이면 ./termux/stop.sh 뒤 ./termux/start.sh 로 다시 켜 주세요." % ch)
+    return 0
 
 
 def main(argv):
@@ -115,6 +150,8 @@ def main(argv):
     if cmd == "setup":
         _setup()
         return 0
+    if cmd == "hook":
+        return _set_hook(argv[2] if len(argv) > 2 else "symbols")
     try:
         cfg = config.load()
     except config.ConfigError as e:

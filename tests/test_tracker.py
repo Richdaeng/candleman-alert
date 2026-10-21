@@ -37,15 +37,15 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual(self.ev(otu(1, "BUY", "LIMIT", "NEW", "NEW", q="0.050", p="82000.0")), [])
         self.assertEqual(self.tick(1000), [])
         out = self.tick(1100)
-        self.assertEqual(out, ["📝 주문 걸어 둠 · 비트코인(BTC) 롱 진입 (오르면 이익)\n$82,000에 0.05 BTC · 약 $4,100어치 · 아직 체결 전"])
+        self.assertEqual(out, ["📝 주문 걸어 둠 · 비트코인(BTC) 롱 진입 (오르면 이익)\n$82,000에 0.05 BTC · 약 $4,100어치(레버리지 포함) · 아직 체결 전"])
         # 체결
         out = self.ev(otu(1, "BUY", "LIMIT", "TRADE", "FILLED", q="0.050", p="82000.0", l="0.050", L="82000.0", n="0.82"), 60_000)
-        self.assertEqual(out, ["🟢 비트코인(BTC) 롱 진입 · 오르면 이익\n$82,000에 0.05 BTC · 약 $4,100어치 · 걸어 둔 주문 체결"])
+        self.assertEqual(out, ["🟢 비트코인(BTC) 롱 진입 · 오르면 이익\n$82,000에 0.05 BTC · 약 $4,100어치(레버리지 포함) · 걸어 둔 주문 체결"])
         # 2 시장가로 추가 — '주문' 알림 없이 체결만
         self.assertEqual(self.ev(otu(2, "BUY", "MARKET", "NEW", "NEW", q="0.030"), 1000), [])
         out = self.ev(otu(2, "BUY", "MARKET", "TRADE", "FILLED", q="0.030", l="0.030", L="81500.0"), 10)
         self.assertEqual(out, ["➕ 비트코인(BTC) 롱 추가 진입 · 오르면 이익\n"
-                               "$81,500에 0.03 BTC 더 · 평균 가격 $81,812.50 · 모두 0.08 BTC (약 $6,545어치) · 바로 체결(시장가)"])
+                               "$81,500에 0.03 BTC 더 · 평균 가격 $81,812.50 · 모두 0.08 BTC · 약 $6,545어치(레버리지 포함) · 바로 체결(시장가)"])
         # 3 일부 청산
         out = self.ev(otu(3, "SELL", "MARKET", "TRADE", "FILLED", q="0.040", l="0.040", L="83000.0", rp="47.50"), 3_600_000)
         self.assertEqual(out, ["🟠 비트코인(BTC) 롱 일부 청산 · 이익 +$47.50\n$83,000에 0.04 BTC 정리 · 남은 0.04 BTC · 바로 체결(시장가)"])
@@ -60,16 +60,16 @@ class TrackerTest(unittest.TestCase):
         self.ev(otu(10, "BUY", "MARKET", "TRADE", "FILLED", q="0.02", l="0.02", L="80000.0"))
         out = self.ev(otu(11, "SELL", "MARKET", "TRADE", "FILLED", q="0.05", l="0.05", L="79000.0", rp="-20.00"), 60_000)
         self.assertEqual(out, ["⬜ 비트코인(BTC) 롱 청산 · 손실 −$20.00\n$79,000에 0.02 BTC 모두 정리 · 1분 보유 · 바로 체결(시장가)",
-                               "🔴 비트코인(BTC) 숏 진입 · 내리면 이익\n$79,000에 0.03 BTC · 약 $2,370어치 · 바로 체결(시장가)"])
+                               "🔴 비트코인(BTC) 숏 진입 · 내리면 이익\n$79,000에 0.03 BTC · 약 $2,370어치(레버리지 포함) · 바로 체결(시장가)"])
 
     def test_cancel_and_partial(self):
         self.ev(otu(20, "SELL", "LIMIT", "NEW", "NEW", q="0.050", p="90000.0", s="BTCUSDT"))
-        self.assertEqual(self.tick(2100), ["📝 주문 걸어 둠 · 비트코인(BTC) 숏 진입 (내리면 이익)\n$90,000에 0.05 BTC · 약 $4,500어치 · 아직 체결 전"])
+        self.assertEqual(self.tick(2100), ["📝 주문 걸어 둠 · 비트코인(BTC) 숏 진입 (내리면 이익)\n$90,000에 0.05 BTC · 약 $4,500어치(레버리지 포함) · 아직 체결 전"])
         self.assertEqual(self.ev(otu(20, "SELL", "LIMIT", "TRADE", "PARTIALLY_FILLED", q="0.050", p="90000.0", l="0.010", L="90000.0"), 1000), [])
         out = self.tick(5100)
-        self.assertEqual(out, ["🔴 비트코인(BTC) 숏 진입 · 내리면 이익\n$90,000에 0.01 BTC · 약 $900어치 · 걸어 둔 주문 체결"])
+        self.assertEqual(out, ["🔴 비트코인(BTC) 숏 진입 · 내리면 이익\n$90,000에 0.01 BTC · 약 $900어치(레버리지 포함) · 걸어 둔 주문 체결"])
         out = self.ev(otu(20, "SELL", "LIMIT", "CANCELED", "CANCELED", q="0.050", p="90000.0"), 10_000)
-        self.assertEqual(out, ["✖️ 주문 취소 · 비트코인(BTC) 숏 진입 · $90,000에 0.05 BTC · 일부 체결되고 남은 0.04 BTC"])
+        self.assertEqual(out, ["✖️ 주문 취소 · 비트코인(BTC) 숏 진입 · $90,000에 0.05 BTC 중 0.01 BTC 체결 · 남은 0.04 BTC 취소"])
 
     def test_liquidation(self):
         self.ev(otu(30, "BUY", "MARKET", "TRADE", "FILLED", q="1", l="1", L="2500.00", s="ETHUSDT"))
@@ -86,7 +86,7 @@ class TrackerTest(unittest.TestCase):
         au = {"e": "ACCOUNT_UPDATE", "a": {"m": "ORDER", "B": [], "P": [{"s": "SOLUSDT", "pa": "10", "ep": "150.00", "ps": "BOTH"}]}}
         self.assertEqual(self.ev(au), [])
         out = self.ev(otu(40, "BUY", "MARKET", "TRADE", "FILLED", q="10", l="10", L="150.00", s="SOLUSDT"), 200)
-        self.assertEqual(out, ["🟢 솔라나(SOL) 롱 진입 · 오르면 이익\n$150에 10 SOL · 약 $1,500어치 · 바로 체결(시장가)"])
+        self.assertEqual(out, ["🟢 솔라나(SOL) 롱 진입 · 오르면 이익\n$150에 10 SOL · 약 $1,500어치(레버리지 포함) · 바로 체결(시장가)"])
         self.tick(4000)
         self.assertEqual(str(self.t.positions[("SOLUSDT", "BOTH")].amt), "10")
 
@@ -94,12 +94,33 @@ class TrackerTest(unittest.TestCase):
         res = self.t.on_event({"e": "ACCOUNT_UPDATE", "a": {"m": "FUNDING_FEE", "S": "BTCUSDT", "B": [{"a": "USDT", "wb": "1", "cw": "1", "bc": "-0.1234"}]}}, self.now)
         self.assertEqual(res[1][0]["kind"], "funding")
         self.assertEqual(res[1][0]["amount"], "-0.1234")
+        self.ev(otu(776, "BUY", "MARKET", "TRADE", "FILLED", q="0.02", l="0.02", L="80000.0"))      # 롱을 들고 있는 상태
         algo = {"e": "ALGO_UPDATE", "o": {"aid": 777, "X": "NEW", "o": "STOP_MARKET", "s": "BTCUSDT", "S": "SELL", "q": "0.01", "tp": "78000.0", "ps": "BOTH", "R": True}}
         self.assertEqual(self.ev(algo), [])
-        self.assertEqual(self.tick(2100), ["📝 손절 주문 걸어 둠 · 비트코인(BTC) 롱 청산\n"
-                                           "가격이 $78,000에 닿으면 시장가로 0.01 BTC 정리 · 약 $780어치 · 아직 발동 전"])
+        self.assertEqual(self.tick(2100), ["📝 스탑 로스 걸어 둠 · 비트코인(BTC) 롱 청산\n"
+                                           "가격이 $78,000에 닿으면 시장가로 0.01 BTC 정리 · 약 $780어치(레버리지 포함) · 아직 발동 전"])
         algo["o"]["X"] = "CANCELED"
-        self.assertEqual(self.ev(algo, 1000), ["✖️ 손절 주문 취소 · 비트코인(BTC) 롱 청산 · 가격이 $78,000에 닿으면 시장가로 0.01 BTC 정리"])
+        self.assertEqual(self.ev(algo, 1000), ["✖️ 스탑 로스 취소 · 비트코인(BTC) 롱 청산 · 가격이 $78,000에 닿으면 시장가로 0.01 BTC 정리"])
+
+    def test_orphan_stop_not_announced(self):
+        # 포지션을 다 정리하면 바이낸스가 스탑 로스 · 익절을 저절로 지움 → 그 만료 · 취소는 알리지 않음
+        self.ev(otu(90, "BUY", "MARKET", "TRADE", "FILLED", q="0.05", l="0.05", L="82000.0"))
+        stop = {"e": "ALGO_UPDATE", "o": {"aid": 91, "X": "NEW", "o": "STOP_MARKET", "s": "BTCUSDT", "S": "SELL", "q": "0", "tp": "80000", "ps": "BOTH", "cp": True}}
+        self.ev(stop, 100)
+        self.assertEqual(len(self.tick(2100)), 1)
+        tp = otu(92, "SELL", "LIMIT", "NEW", "NEW", q="0.05", p="86000.0", R=True)
+        self.ev(tp, 100)
+        self.assertEqual(len(self.tick(2100)), 1)
+        out = self.ev(otu(93, "SELL", "MARKET", "TRADE", "FILLED", q="0.05", l="0.05", L="83000.0", rp="50.00"), 60_000)
+        self.assertTrue(out[0].startswith("⬜ 비트코인(BTC) 롱 청산 · 이익 +$50.00"))
+        stop["o"]["X"] = "EXPIRED"
+        self.assertEqual(self.ev(stop, 100), [])
+        self.assertEqual(self.ev(otu(92, "SELL", "LIMIT", "CANCELED", "CANCELED", q="0.05", p="86000.0", R=True), 100), [])
+        # 포지션이 없어도 진입 주문 취소는 그대로 알림
+        self.ev(otu(94, "BUY", "LIMIT", "NEW", "NEW", q="0.01", p="70000.0"), 100)
+        self.tick(2100)
+        self.assertEqual(self.ev(otu(94, "BUY", "LIMIT", "CANCELED", "CANCELED", q="0.01", p="70000.0"), 100),
+                         ["✖️ 주문 취소 · 비트코인(BTC) 롱 진입 · $70,000에 0.01 BTC"])
 
     def test_take_profit_close_all(self):
         self.ev(otu(60, "SELL", "MARKET", "TRADE", "FILLED", q="2", l="2", L="3000.00", s="ETHUSDT"))
@@ -109,11 +130,11 @@ class TrackerTest(unittest.TestCase):
 
     def test_stock_units_and_unknown_symbol(self):
         out = self.ev(otu(70, "SELL", "MARKET", "TRADE", "FILLED", q="20", l="20", L="154.90", s="EWYUSDT"))
-        self.assertEqual(out, ["🔴 한국 주식 ETF(EWY) 숏 진입 · 내리면 이익\n$154.90에 20주 · 약 $3,098어치 · 바로 체결(시장가)"])
+        self.assertEqual(out, ["🔴 한국 주식 ETF(EWY) 숏 진입 · 내리면 이익\n$154.90에 20주 · 약 $3,098어치(레버리지 포함) · 바로 체결(시장가)"])
         out = self.ev(otu(71, "BUY", "MARKET", "TRADE", "FILLED", q="20", l="20", L="156.10", s="EWYUSDT", rp="0"), 60_000)
         self.assertEqual(out, ["⬜ 한국 주식 ETF(EWY) 숏 청산 · 손익 $0.00\n$156.10에 20주 모두 정리 · 1분 보유 · 바로 체결(시장가)"])
         out = self.ev(otu(72, "BUY", "MARKET", "TRADE", "FILLED", q="5", l="5", L="1.2345", s="FOOUSDT"))
-        self.assertEqual(out, ["🟢 FOO 롱 진입 · 오르면 이익\n$1.2345에 5 FOO · 약 $6.17어치 · 바로 체결(시장가)"])
+        self.assertEqual(out, ["🟢 FOO 롱 진입 · 오르면 이익\n$1.2345에 5 FOO · 약 $6.17어치(레버리지 포함) · 바로 체결(시장가)"])
 
     def test_hedge_mode_short(self):
         self.ev(otu(50, "SELL", "MARKET", "TRADE", "FILLED", q="2", l="2", L="3000.00", s="ETHUSDT", ps="SHORT"))

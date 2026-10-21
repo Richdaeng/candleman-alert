@@ -131,3 +131,14 @@ class Binance:
     async def price(self, symbol):
         j = await self.call("GET", "/fapi/v1/ticker/price", {"symbol": symbol})
         return j.get("price")
+
+    async def symbol_kind(self, symbol):
+        """종목 분류(COIN · EQUITY · KR_EQUITY · COMMODITY …). 공개 정보라 키를 쓰지 않음. 모르면 None."""
+        try:
+            j = await self.call("GET", "/fapi/v1/exchangeInfo", timeout=30)
+        except Exception:
+            return None
+        for s in j.get("symbols", []):
+            if s.get("symbol") == symbol:
+                return s.get("underlyingType")
+        return None

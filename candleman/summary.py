@@ -42,7 +42,7 @@ def build_text(start_ms, end_ms, fills, realized_rows, fee_rows, funding_rows, p
     unreal = sum((dec(p.get("unRealizedProfit")) for p in positions), ZERO)
     s, e = fmt.kst(start_ms), fmt.kst(end_ms)
     lines = ["📊 %s 요약 (%s ~ %s)" % (e.strftime("%m/%d"), s.strftime("%m/%d %H:%M"), e.strftime("%m/%d %H:%M")),
-             "거래 %d번" % len(orders),
+             "거래 %d번" % len(orders) if orders else "거래 없음",
              "실현 손익 %s" % fmt.usd(realized, sign=True),
              "미실현 손익 %s" % fmt.usd(unreal, sign=True),
              "수수료 %s%s" % (fmt.usd(fees, sign=True), " (BNB로 낸 것은 지금 값으로 환산)" if fee_conv else ""),
@@ -56,9 +56,9 @@ def build_text(start_ms, end_ms, fills, realized_rows, fee_rows, funding_rows, p
                 side = "롱" if p["positionSide"] == "LONG" else "숏"
             notional = abs(dec(p.get("notional"))) or abs(amt) * dec(p.get("markPrice"))
             base = base_of(p.get("symbol", ""))
-            lines.append("· %s %s %s · 평균 가격 %s · 약 %s어치 · 미실현 %s" % (
+            lines.append("· %s %s %s · 평균 가격 %s · %s · 미실현 %s" % (
                 names.label(base), side, names.amount(amt, base), fmt.dollar(dec(p.get("entryPrice"))),
-                fmt.usd_about(notional), fmt.usd(dec(p.get("unRealizedProfit")), sign=True)))
+                fmt.worth(notional), fmt.usd(dec(p.get("unRealizedProfit")), sign=True)))
     else:
         lines.append("들고 있는 포지션: 없음")
     if gaps:

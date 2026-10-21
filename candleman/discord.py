@@ -21,9 +21,18 @@ class Discord:
     def __repr__(self):
         return "Discord(channels=%s)" % sorted(self.urls)
 
-    def _post(self, channel, text):
+    def has(self, channel):
+        """그 채널 웹후크가 따로 있는지 (없으면 보내지 말아야 하는 글을 가릴 때)."""
+        return bool(self.urls.get(channel))
+
+    def _post(self, channel, text, embeds=None):
         url = self.urls.get(channel) or self.urls.get("trade")
-        body = json.dumps({"content": text[:2000], "allowed_mentions": {"parse": []}}).encode("utf-8")
+        payload = {"allowed_mentions": {"parse": []}}
+        if text:
+            payload["content"] = text[:2000]
+        if embeds:
+            payload["embeds"] = embeds
+        body = json.dumps(payload).encode("utf-8")
         for attempt in range(5):
             req = urllib.request.Request(url, data=body, method="POST",
                                          headers={"Content-Type": "application/json", "User-Agent": USER_AGENT})
@@ -49,15 +58,16 @@ class Discord:
     def send_now(self, channel, text):
         return self._post(channel, text)
 
-    async def put(self, channel, text):
-        await self.q.put((channel, text))
+    async def put(self, channel, text, embeds=None):
+        await self.q.put((channel, text, embeds))
 
     async def worker(self):
         while True:
-            channel, text = await self.q.get()
-            for part in _split(text):
+            channel, text, embeds = await self.q.get()
+            parts = _split(text) if text else [""]
+            for i, part in enumerate(parts):
                 try:
-                    await asyncio.to_thread(self._post, channel, part)
+                    await asyncio.to_thread(self._post, channel, part, embeds if i == len(parts) - 1 else None)
                 except Exception as e:      # 한 번 실패해도 프로그램은 계속
                     self.log("디스코드 오류: %s" % e)
                 await asyncio.sleep(0.6)    # 웹후크 속도 제한 아래로

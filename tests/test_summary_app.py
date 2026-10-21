@@ -37,10 +37,11 @@ class SummaryTest(unittest.TestCase):
             "수수료 −$1.80 (BNB로 낸 것은 지금 값으로 환산)",
             "펀딩비 −$0.33",
             "들고 있는 포지션",
-            "· 솔라나(SOL) 롱 12 SOL · 평균 가격 $150.25 · 약 $1,803어치 · 미실현 −$12.00",
+            "· 솔라나(SOL) 롱 12 SOL · 평균 가격 $150.25 · 약 $1,803어치(레버리지 포함) · 미실현 −$12.00",
         ])
         empty = summary.build_text(s, e, [], [], [], [], [], gaps=[(ms(2026, 10, 21, 3), ms(2026, 10, 21, 4, 30))])
         self.assertIn("들고 있는 포지션: 없음", empty)
+        self.assertIn("거래 없음", empty)
         self.assertIn("03:00~04:30", empty)
 
 
@@ -64,11 +65,15 @@ class FakeBinance:
 
 
 class FakeDiscord:
-    def __init__(self):
+    def __init__(self, channels=("trade", "summary", "status")):
         self.sent = []
+        self.channels = channels
 
-    async def put(self, ch, text):
-        self.sent.append((ch, text))
+    def has(self, ch):
+        return ch in self.channels
+
+    async def put(self, ch, text, embeds=None):
+        self.sent.append((ch, text, embeds) if embeds else (ch, text))
 
 
 class GapTest(unittest.TestCase):
@@ -95,6 +100,67 @@ class GapTest(unittest.TestCase):
             self.assertEqual(app.t.positions, {})
         finally:
             store.DATA_DIR, store.STATE, store.JOURNAL, store.LOG = old[1], old[2], old[3], old[4]
+
+
+class FakeKind:
+    def __init__(self, kind):
+        self.kind, self.asked = kind, []
+
+    async def symbol_kind(self, symbol):
+        self.asked.append(symbol)
+        return self.kind
+
+
+class IntroTest(unittest.TestCase):
+    """처음 진입한 종목을 #종목설명에 한 번만 소개하는지."""
+
+    def setUp(self):
+        from candleman import store
+        tmp = tempfile.mkdtemp()
+        self.old = (store.DATA_DIR, store.STATE, store.JOURNAL, store.LOG)
+        store.DATA_DIR = tmp
+        store.STATE, store.JOURNAL, store.LOG = (os.path.join(tmp, n) for n in ("state.json", "journal.jsonl", "app.log"))
+
+    def tearDown(self):
+        from candleman import store
+        store.DATA_DIR, store.STATE, store.JOURNAL, store.LOG = self.old
+
+    def make(self, channels=("trade", "status", "symbols"), kind="EQUITY"):
+        from candleman.app import App
+        app = App.__new__(App)
+        app.state, app.d, app.b = {}, FakeDiscord(channels), FakeKind(kind)
+        return app
+
+    def cards(self, app):
+        return [s[2][0] for s in app.d.sent if s[0] == "symbols"]
+
+    def test_known_symbol_once(self):
+        app = self.make()
+        asyncio.run(app.emit([], [{"kind": "fill", "effect": "open", "symbol": "KORUUSDT", "t": ms(2026, 10, 21, 10)}]))
+        asyncio.run(app.emit([], [{"kind": "fill", "effect": "flip", "symbol": "KORUUSDT", "t": ms(2026, 10, 21, 11)}]))
+        asyncio.run(app.emit([], [{"kind": "fill", "effect": "add", "symbol": "TSLAUSDT", "t": ms(2026, 10, 21, 11)}]))
+        asyncio.run(app._introduce("BTCUSDT"))                 # 공지에 처음부터 있던 종목
+        cards = self.cards(app)
+        self.assertEqual([c["title"] for c in cards], ["🆕 KORU · 한국 주식 3배 ETF"])
+        self.assertIn("3배", cards[0]["description"])
+        self.assertTrue(cards[0]["timestamp"].startswith("2026-10-21T01:00"))
+        self.assertEqual(app.b.asked, [])                      # 설명이 있으면 바이낸스에 묻지 않음
+        self.assertFalse(any(s[0] == "status" for s in app.d.sent))
+
+    def test_unknown_symbol_gets_basic_card(self):
+        app = self.make(kind="EQUITY")
+        asyncio.run(app._introduce("FOOUSDT"))
+        card = self.cards(app)[0]
+        self.assertEqual(card["title"], "🆕 FOO")
+        self.assertEqual(card["description"], "미국 주식 · ETF 선물. 자세한 설명은 곧 추가함.")
+        self.assertEqual([s[0] for s in app.d.sent], ["symbols", "status"])
+        self.assertIn("FOO", app.d.sent[1][1])
+
+    def test_no_symbols_hook(self):
+        app = self.make(channels=("trade", "status"))
+        asyncio.run(app._introduce("KORUUSDT"))
+        self.assertEqual(app.d.sent, [])
+        self.assertNotIn("KORU", app.state.get("introduced", []))   # 나중에 웹후크를 넣으면 그때 소개
 
 
 if __name__ == "__main__":

@@ -39,6 +39,8 @@ def load(path=ENV_PATH):
     hooks = {"trade": e["DISCORD_WEBHOOK_TRADE"]}
     hooks["summary"] = e.get("DISCORD_WEBHOOK_SUMMARY") or hooks["trade"]
     hooks["status"] = e.get("DISCORD_WEBHOOK_STATUS") or hooks["summary"]
+    if e.get("DISCORD_WEBHOOK_SYMBOLS"):               # 있으면 처음 진입한 종목을 #종목설명에 소개
+        hooks["symbols"] = e["DISCORD_WEBHOOK_SYMBOLS"]
     for name, url in hooks.items():
         if not url.startswith(WEBHOOK_PREFIXES):
             raise ConfigError("%s 웹후크 주소가 디스코드 주소가 아니에요 (https://discord.com/api/webhooks/ 로 시작해야 함)" % name)

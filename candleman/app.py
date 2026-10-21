@@ -2,6 +2,7 @@
 import asyncio
 import json
 import time
+from datetime import datetime, timezone
 
 from . import fmt, names, store, summary
 from .binance import WS_PRIVATE, Binance, BinanceError
@@ -209,6 +210,24 @@ class App:
         for m in msgs:
             await self.d.put(m.channel, m.text)
         store.append(recs)
+        for r in recs:
+            if r.get("kind") == "fill" and r.get("effect") in ("open", "flip"):
+                await self._introduce(r.get("symbol", ""), r.get("t"))
+
+    async def _introduce(self, symbol, t_ms=None):
+        """처음 진입한 종목이면 #종목설명에 소개 카드를 올림 (DISCORD_WEBHOOK_SYMBOLS 가 있을 때만, 종목마다 한 번)."""
+        base = base_of(symbol)
+        done = self.state.setdefault("introduced", list(names.ALREADY_INTRODUCED))
+        if not base or base in done or not self.d.has("symbols"):
+            return
+        done.append(base)
+        store.save_state(self.state)
+        known = base in names.DESCRIPTIONS
+        card = names.intro_card(base, None if known else await self.b.symbol_kind(symbol))
+        card["timestamp"] = datetime.fromtimestamp((t_ms or now_ms()) / 1000, timezone.utc).isoformat()
+        await self.d.put("symbols", "", [card])
+        if not known:
+            await self.d.put("status", "📝 설명이 없는 새 종목 %s — #종목설명에 기본 문구로 올림. 설명 추가 필요." % base)
 
     def _add_gap(self, a, b):
         gaps = [g for g in self.state.get("gaps", []) if g[1] > now_ms() - 8 * 86400 * 1000]

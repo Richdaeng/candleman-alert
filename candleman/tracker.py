@@ -188,11 +188,14 @@ class Tracker:
                 m, r = self._flush(order, now_ms)
                 msgs += m
                 recs += r
-            if order.pending_posted and not order.liquidation:
-                left = order.qty - order.filled_total
-                word = "⌛ %s 만료" if (x == "EXPIRED" or st in ("EXPIRED", "EXPIRED_IN_MATCH")) else "✖️ %s 취소"
-                tail = " · 일부 체결되고 남은 %s" % names.amount(left, base_of(order.symbol)) if order.filled_total > 0 else ""
-                msgs.append(Msg("trade", self._order_note(order, word) + tail))
+            if order.pending_posted and not order.liquidation and not self._orphan(order):
+                expired = x == "EXPIRED" or st in ("EXPIRED", "EXPIRED_IN_MATCH")
+                text = self._order_note(order, "⌛ %s 만료" if expired else "✖️ %s 취소")
+                if order.filled_total > 0:
+                    base = base_of(order.symbol)
+                    text += " 중 %s 체결 · 남은 %s %s" % (names.amount(order.filled_total, base),
+                                                       names.amount(order.qty - order.filled_total, base), "만료" if expired else "취소")
+                msgs.append(Msg("trade", text))
             recs.append({"kind": "order_end", "t": now_ms, "key": key, "status": st or x})
             order.pending_due = 0
             order.done = True
@@ -225,7 +228,7 @@ class Tracker:
             if st == "FINISHED":
                 order.done = True
         elif st in ("CANCELED", "CANCELLED", "EXPIRED", "REJECTED"):
-            if order.pending_posted:
+            if order.pending_posted and (st == "REJECTED" or not self._orphan(order)):
                 word = {"EXPIRED": "⌛ %s 만료", "REJECTED": "⛔ %s 거부"}.get(st, "✖️ %s 취소")
                 msgs.append(Msg("trade", self._order_note(order, word)))
             order.pending_due = 0
@@ -306,6 +309,13 @@ class Tracker:
         cur = pos.amt if pos else ZERO
         return o.reduce or o.closepos or (cur > 0 and not buy) or (cur < 0 and buy)
 
+    def _orphan(self, o):
+        """포지션이 이미 없어진 뒤의 청산 주문 — 바이낸스가 저절로 지우는 것이라 취소 · 만료를 알리지 않음."""
+        if not self._closing(o):
+            return False
+        pos = self.positions.get((o.symbol, o.pside))
+        return not pos or pos.amt == 0
+
     @staticmethod
     def _what(o, closing):
         buy = o.side == "BUY"
@@ -316,11 +326,11 @@ class Tracker:
     @staticmethod
     def _kind(o, closing):
         if o.otype in ("STOP", "STOP_MARKET"):
-            return "손절 주문" if closing else "조건부 진입 주문"
+            return "스탑 로스" if closing else "조건부 진입 주문"
         if o.otype in ("TAKE_PROFIT", "TAKE_PROFIT_MARKET"):
             return "익절 주문" if closing else "조건부 진입 주문"
         if o.otype == "TRAILING_STOP_MARKET":
-            return "추적 손절 주문"
+            return "트레일링 스탑"
         return "주문"
 
     def _detail(self, o, closing, approx=False):
@@ -338,7 +348,7 @@ class Tracker:
             s = " ".join(w for w in ("%s에" % fmt.dollar(o.price) if o.price else "", amt) if w)
         ref = o.price or o.stop
         if approx and o.qty and ref and not o.closepos:
-            s += " · 약 %s어치" % fmt.usd_about(o.qty * ref)
+            s += " · " + fmt.worth(o.qty * ref)
         return s
 
     def _order_posted(self, o):
@@ -397,8 +407,8 @@ class Tracker:
         def opened(amount, at_price):
             d = sgn(amount)
             icon = "🟢" if d > 0 else "🔴"
-            return "%s %s %s 진입 · %s\n%s에 %s · 약 %s어치%s" % (icon, name, fmt.side_word(d), fmt.side_hint(d), px(at_price), amt(amount),
-                                                        fmt.usd_about(abs(amount) * at_price), how)
+            return "%s %s %s 진입 · %s\n%s에 %s · %s%s" % (icon, name, fmt.side_word(d), fmt.side_hint(d), px(at_price), amt(amount),
+                                                       fmt.worth(abs(amount) * at_price), how)
 
         if prev == 0:
             p.amt, p.entry, p.opened_ms, p.trip_pnl, p.reduced = new, avg, first_ms or now_ms, ZERO, False
@@ -408,8 +418,8 @@ class Tracker:
             p.entry = (abs(prev) * p.entry + q * avg) / abs(new)
             p.amt = new
             d = sgn(new)
-            msgs.append(Msg("trade", "➕ %s %s 추가 진입 · %s\n%s에 %s 더 · 평균 가격 %s · 모두 %s (약 %s어치)%s" % (
-                name, fmt.side_word(d), fmt.side_hint(d), px(avg), amt(q), px(p.entry), amt(new), fmt.usd_about(abs(new) * p.entry), how)))
+            msgs.append(Msg("trade", "➕ %s %s 추가 진입 · %s\n%s에 %s 더 · 평균 가격 %s · 모두 %s · %s%s" % (
+                name, fmt.side_word(d), fmt.side_hint(d), px(avg), amt(q), px(p.entry), amt(new), fmt.worth(abs(new) * p.entry), how)))
             rec["effect"] = "add"
         elif sgn(prev) == sgn(new) and new != 0:
             p.amt = new
