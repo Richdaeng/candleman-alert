@@ -102,6 +102,39 @@ class TrackerTest(unittest.TestCase):
         algo["o"]["X"] = "CANCELED"
         self.assertEqual(self.ev(algo, 1000), ["✖️ 스탑 로스 취소 · 비트코인(BTC) 롱 청산 · 가격이 $78,000에 닿으면 시장가로 0.01 BTC 정리"])
 
+    def test_triggered_stop_says_stop_loss(self):
+        """10/22: 스탑 로스가 발동해 생긴 시장가 주문이 '바로 체결(시장가)'로만 나옴 → 발동과 짝지어 '스탑 로스 발동'."""
+        self.ev(otu(80, "BUY", "MARKET", "TRADE", "FILLED", q="65.13", l="65.13", L="153.44", s="EWYUSDT"))
+        stop = {"e": "ALGO_UPDATE", "o": {"aid": 81, "X": "NEW", "o": "STOP_MARKET", "s": "EWYUSDT", "S": "SELL", "q": "32.56", "tp": "154",
+                                          "ps": "BOTH", "R": True}}
+        self.ev(stop, 100)
+        self.tick(2100)
+        stop["o"]["X"] = "TRIGGERING"                                      # 발동 (실제 주문 번호는 아직 없음)
+        self.assertEqual(self.ev(stop, 60_000), [])
+        self.ev(otu(82, "SELL", "MARKET", "NEW", "NEW", q="32.56", s="EWYUSDT", R=True), 50)      # 원래 종류(ot) 없이 새 시장가 주문
+        out = self.ev(otu(82, "SELL", "MARKET", "TRADE", "FILLED", q="32.56", l="32.56", L="154.01", rp="18.25", s="EWYUSDT", R=True), 50)
+        self.assertEqual(out, ["🟠 한국 주식 ETF(EWY) 롱 일부 청산 · 이익 +$18.25\n$154.01에 32.56주 정리 · 남은 32.57주 · 스탑 로스 발동"])
+        stop["o"].update(X="FINISHED", ai="82")
+        self.assertEqual(self.ev(stop, 50), [])
+        # 손으로 넣은 시장가 주문은 그대로 '바로 체결(시장가)'
+        out = self.ev(otu(83, "SELL", "MARKET", "TRADE", "FILLED", q="10", l="10", L="155.00", rp="5", s="EWYUSDT"), 120_000)
+        self.assertTrue(out[0].endswith("· 바로 체결(시장가)"))
+
+    def test_trigger_event_after_order_and_take_profit(self):
+        """발동 소식(실제 주문 번호 포함)이 새 주문보다 늦게 와도 체결 전이면 짝지음 · 익절은 '익절 주문 발동'."""
+        self.ev(otu(84, "SELL", "MARKET", "TRADE", "FILLED", q="2", l="2", L="3000.00", s="ETHUSDT"))
+        tp = {"e": "ALGO_UPDATE", "o": {"aid": 85, "X": "NEW", "o": "TAKE_PROFIT_MARKET", "s": "ETHUSDT", "S": "BUY", "q": "0", "tp": "2800",
+                                        "ps": "BOTH", "cp": True}}
+        self.ev(tp, 100)
+        self.tick(2100)
+        self.ev(otu(86, "BUY", "MARKET", "NEW", "NEW", q="2", s="ETHUSDT", cp=True), 60_000)
+        tp["o"].update(X="TRIGGERED", ai="86")
+        self.ev(tp, 30)
+        out = self.ev(otu(86, "BUY", "MARKET", "TRADE", "FILLED", q="2", l="2", L="2799.50", rp="401.00", s="ETHUSDT", cp=True), 30)
+        self.assertTrue(out[0].startswith("⬜ 이더리움(ETH) 숏 청산 · 이익 +$401.00"))
+        self.assertIn("· 익절 주문 발동", out[0])
+        self.assertEqual(self.t.triggers, [])                                # 짝을 지었으니 기다리는 발동이 남지 않음
+
     def test_orphan_stop_not_announced(self):
         # 포지션을 다 정리하면 바이낸스가 스탑 로스 · 익절을 저절로 지움 → 그 만료 · 취소는 알리지 않음
         self.ev(otu(90, "BUY", "MARKET", "TRADE", "FILLED", q="0.05", l="0.05", L="82000.0"))

@@ -33,18 +33,19 @@ USER_AGENT = "DiscordBot (https://github.com/Richdaeng/candleman-alert, 1.0)"
 COMMAND = {"name": "포지션", "description": "운영자가 지금 들고 있는 포지션 보기", "type": 1}   # 서버 전용 명령이라 contexts 는 안 씀
 RETURN_COMMAND = {"name": "주인장수익률", "description": "운영자가 시작한 금액 대비 지금 자산과 수익률 보기", "type": 1}
 NOTE_REASONS = ("거시 경제", "뉴스 · 일정", "차트", "직감", "기타")
+NOTE_WHEN = ("진입", "추가", "손절", "익절", "정리")   # 10/22 댕이: 스탑 로스 얘기를 적었는데 '때'를 비워 '진입'으로 남음 → 꼭 고르게
 NOTE_COMMAND = {
     "name": "일지", "type": 1, "description": "운영자 전용 · 이번 거래를 왜 했는지 #매매일지에 남기기",
     "default_member_permissions": "0",                     # 관리자(서버 주인)에게만 보이는 명령
-    "options": [
-        {"type": 3, "name": "이유", "description": "왜 들어갔나 (정리할 때는 왜 정리했나)", "required": True,
+    "options": [                                           # 꼭 넣을 것이 앞 (디스코드 규칙)
+        {"type": 3, "name": "이유", "description": "왜 했나", "required": True,
          "choices": [{"name": r, "value": r} for r in NOTE_REASONS]},
+        {"type": 3, "name": "때", "description": "무엇을 했나 — 진입 · 추가 · 손절(스탑 로스 포함) · 익절 · 정리", "required": True,
+         "choices": [{"name": w, "value": w} for w in NOTE_WHEN]},
         {"type": 4, "name": "확신", "description": "얼마나 확신했나 (1 낮음 ~ 5 높음)", "min_value": 1, "max_value": 5},
-        {"type": 3, "name": "때", "description": "진입 · 추가 · 정리 (비우면 진입)",
-         "choices": [{"name": w, "value": w} for w in ("진입", "추가", "정리")]},
         {"type": 3, "name": "종목", "description": "예: EWY · SOL (비우면 마지막으로 주문 · 체결된 종목)", "max_length": 20},
-        {"type": 10, "name": "손절", "description": "생각해 둔 손절 가격", "min_value": 0},
-        {"type": 10, "name": "목표", "description": "생각해 둔 목표 가격", "min_value": 0},
+        {"type": 10, "name": "손절가", "description": "생각해 둔 손절 가격", "min_value": 0},
+        {"type": 10, "name": "목표가", "description": "생각해 둔 목표 가격", "min_value": 0},
         {"type": 3, "name": "메모", "description": "한 줄 메모", "max_length": 300},
     ],
 }
@@ -94,15 +95,15 @@ def note_record(opts, now_ms):
         sym = sym[:-4]
     memo = str(opts.get("메모") or "").strip()
     return {"kind": "note", "t": now_ms, "when": opts.get("때") or "진입", "reason": opts.get("이유"), "confidence": opts.get("확신"),
-            "symbol": sym or last_symbol(now_ms), "stop": opts.get("손절"), "target": opts.get("목표"), "memo": memo[:300] or None}
+            "symbol": sym or last_symbol(now_ms), "stop": opts.get("손절가"), "target": opts.get("목표가"), "memo": memo[:300] or None}
 
 
 def note_text(rec):
-    """'📝 일지 · 한국 주식 ETF(EWY) 진입' / '거시 경제 · 확신 4/5 · 손절 $150.00 · 목표 $165.00' / '메모: …'."""
+    """'📝 일지 · 한국 주식 ETF(EWY) 진입' / '거시 경제 · 확신 4/5 · 손절가 $150.00 · 목표가 $165.00' / '메모: …'."""
     facts = [rec["reason"]]
     if rec.get("confidence"):
         facts.append("확신 %d/5" % rec["confidence"])
-    for key, word in (("stop", "손절"), ("target", "목표")):
+    for key, word in (("stop", "손절가"), ("target", "목표가")):
         if rec.get(key):
             facts.append("%s %s" % (word, fmt.price2(rec[key])))
     lines = ["📝 일지 · %s %s" % (names.label(rec["symbol"]) if rec.get("symbol") else "종목 모름", rec["when"]), " · ".join(facts)]

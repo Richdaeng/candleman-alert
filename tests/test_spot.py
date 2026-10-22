@@ -9,7 +9,7 @@ from decimal import Decimal
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from candleman import store, summary  # noqa: E402
 from candleman.binance import BinanceError, sign_ws_params  # noqa: E402
-from candleman.spot import CostBook, SpotFill, SpotTracker, fill_text, split_symbol  # noqa: E402
+from candleman.spot import CostBook, SpotFill, SpotTracker, fill_text, how_text, split_symbol  # noqa: E402
 from candleman.spotfeed import SpotFeed  # noqa: E402
 
 D = Decimal
@@ -133,6 +133,14 @@ class CostBookTest(unittest.TestCase):
         b.apply(trade(2, 11, False, "0.2", "17000"))
         self.assertEqual((b.qty, b.cost), (D("0"), D("0")))
         self.assertEqual(CostBook.load(b.dump()).dump(), b.dump())
+
+
+class HowTextTest(unittest.TestCase):
+    def test_conditional_words(self):
+        self.assertEqual(how_text("STOP_LOSS_LIMIT", "SELL"), "스탑 로스 발동")
+        self.assertEqual(how_text("TAKE_PROFIT_LIMIT", "SELL"), "익절 주문 발동")
+        self.assertEqual(how_text("STOP_LOSS", "BUY"), "조건 주문 발동")              # 사는 조건 주문(돌파 매수 등)
+        self.assertEqual((how_text("MARKET", "SELL"), how_text("LIMIT", "BUY")), ("바로 체결(시장가)", "걸어 둔 주문 체결"))
 
 
 class FakeBinance:

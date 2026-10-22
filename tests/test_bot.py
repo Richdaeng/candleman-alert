@@ -225,14 +225,16 @@ class NoteCommandTest(BotCase):
     def test_hidden_command_with_reason_choices(self):
         self.assertEqual(NOTE_COMMAND["default_member_permissions"], "0")    # 다른 사람에게는 명령 목록에도 안 보임
         opts = NOTE_COMMAND["options"]
-        self.assertEqual([o["name"] for o in opts if o.get("required")], ["이유"])
-        self.assertTrue(opts[0].get("required"))                            # 꼭 넣을 것이 맨 앞 (디스코드 규칙)
+        self.assertEqual([o["name"] for o in opts if o.get("required")], ["이유", "때"])   # 10/22: '때'를 비워 '진입'으로 잘못 남은 뒤로 꼭 고름
+        self.assertTrue(opts[0].get("required") and opts[1].get("required"))  # 꼭 넣을 것이 맨 앞 (디스코드 규칙)
         self.assertEqual([c["value"] for c in opts[0]["choices"]], ["거시 경제", "뉴스 · 일정", "차트", "직감", "기타"])
+        self.assertEqual([c["value"] for c in opts[1]["choices"]], ["진입", "추가", "손절", "익절", "정리"])
+        self.assertEqual(len({o["name"] for o in opts}), len(opts))           # 이름이 겹치지 않음 (손절가 · 목표가)
         self.assertTrue(all(len(o["description"]) <= 100 for o in opts))
 
     def test_owner_note_saved_and_answered_privately(self):
-        calls = self.run_one(note(1, 이유="거시 경제", 확신=4, 종목="ewy", 손절=150, 목표=165.5, 메모="FOMC 앞 매수"))
-        text = "📝 일지 · 한국 주식 ETF(EWY) 진입\n거시 경제 · 확신 4/5 · 손절 $150.00 · 목표 $165.50\n메모: FOMC 앞 매수"
+        calls = self.run_one(note(1, 이유="거시 경제", 때="진입", 확신=4, 종목="ewy", 손절가=150, 목표가=165.5, 메모="FOMC 앞 매수"))
+        text = "📝 일지 · 한국 주식 ETF(EWY) 진입\n거시 경제 · 확신 4/5 · 손절가 $150.00 · 목표가 $165.50\n메모: FOMC 앞 매수"
         (m, p, body, auth), = calls
         self.assertEqual((m, p, auth), ("POST", "/interactions/n1/nt1/callback", False))
         self.assertEqual(body["type"], 4)

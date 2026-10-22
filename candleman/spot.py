@@ -213,18 +213,27 @@ def order_line(o, base, quote):
 def posted_text(o):
     base, quote = split_symbol(o.symbol)
     cond = o.otype in CONDITIONAL
-    what = "조건 주문" if cond else "주문"
+    what = cond_word(o.otype, o.side) if cond else "주문"
     tail = " · 아직 발동 전" if cond else " · 아직 체결 전"
     worth = " · " + worth_text(o.qty * o.price, quote) if o.price else ""
     return "📝 %s 현물 %s %s 걸어 둠\n%s%s%s" % (names.label(base), side_word(o.side), what, order_line(o, base, quote), worth, tail)
 
 
-def how_text(otype):
+def how_text(otype, side=""):
     if otype == "MARKET":
         return "바로 체결(시장가)"
     if otype in CONDITIONAL:
-        return "조건 주문 발동"
+        return "%s 발동" % cond_word(otype, side)
     return "걸어 둔 주문 체결"
+
+
+def cond_word(otype, side):
+    """조건 주문의 이름: 파는 STOP_LOSS 는 '스탑 로스', 파는 TAKE_PROFIT 은 '익절 주문', 나머지(사는 조건 주문)는 '조건 주문'."""
+    if side == "SELL" and otype.startswith("STOP_LOSS"):
+        return "스탑 로스"
+    if side == "SELL" and otype.startswith("TAKE_PROFIT"):
+        return "익절 주문"
+    return "조건 주문"
 
 
 def _dust(f, q):
@@ -258,7 +267,7 @@ def fill_text(f, held_after, pnl):
         if held_after is not None and not all_gone:
             line += " · 남은 %s" % names.amount(held_after, f.base)
         line += " · " + worth
-    line += " · " + how_text(f.otype)
+    line += " · " + how_text(f.otype, f.side)
     if f.partial and f.open_left:
         line += " · 나머지 %s는 아직 걸려 있음" % names.amount(f.open_left, f.base)
     if f.side == "SELL" and pnl is None and f.usd:
