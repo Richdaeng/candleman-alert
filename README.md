@@ -198,7 +198,7 @@ python -m candleman check
 | `python -m candleman summary` | 지난 요약 구간을 지금 다시 올림 |
 | `python -m candleman demo` | 알림 글 모양 보기 (인터넷 안 씀) |
 | `python -m candleman bot` | 명령 봇(/포지션 · /주인장수익률 · /일지) 토큰 넣기 · 바꾸기 (안 보이게) |
-| `python -m candleman hook symbols` | 웹후크 주소 하나만 넣거나 바꾸기 (`symbols` · `positions` · `trade` · `summary` · `status`) — 바꾼 뒤 `bash termux/restart.sh` |
+| `python -m candleman hook symbols` | 웹후크 주소 하나만 넣거나 바꾸기 (`symbols` · `positions` · `briefing` · `journal` · `trade` · `summary` · `status`) — 바꾼 뒤 `bash termux/restart.sh` |
 
 ## /포지션 · /주인장수익률 명령 봇 (선택)
 
@@ -232,8 +232,10 @@ python -m candleman check
 
 - 이유(꼭): 거시 경제 · 뉴스 · 일정 · 차트 · 직감 · 기타. 나머지는 골라서: 확신(1 ~ 5) · 때(진입 · 추가 · 정리, 비우면 진입) · 종목(비우면 최근 7일 안에
   마지막으로 주문 · 체결된 종목) · 손절 · 목표 가격 · 메모(300자까지).
-- 서버 주인만 쓸 수 있고 다른 사람에게는 명령 목록에도 안 보입니다. 어느 채널에서 써도 답은 쓴 사람에게만 보입니다(`#봇-상태`에서 쓰는 것을 권함).
-- 남긴 것은 폰의 일지(`data/journal.jsonl`, `"kind": "note"`)와 `#봇-상태`에 한 줄씩 남습니다. 고치려면 한 번 더 쓰면 됩니다(나중 것을 씀).
+- 서버 주인만 쓸 수 있고 다른 사람에게는 명령 목록에도 안 보입니다. 어느 채널에서 써도 답은 쓴 사람에게만 보입니다(`#매매일지`에서 쓰는 것을 권함).
+- 남긴 것은 폰의 일지(`data/journal.jsonl`, `"kind": "note"`)와 `#매매일지`에 카드 한 장씩 남습니다. 고치려면 한 번 더 쓰면 됩니다(나중 것을 씀).
+- `#매매일지`는 나만 보는 비공개 채널로 만들고 웹후크를 넣습니다: `python -m candleman hook journal` → 다시 켜기.
+  웹후크를 안 넣으면 `#봇-상태`에 남깁니다.
 
 ## 업데이트
 

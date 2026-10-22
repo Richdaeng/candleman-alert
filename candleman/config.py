@@ -46,6 +46,8 @@ def load(path=ENV_PATH):
         hooks["positions"] = e["DISCORD_WEBHOOK_POSITIONS"]
     if e.get("DISCORD_WEBHOOK_BRIEFING"):              # 있으면 매일 아침 #일일-경제-브리핑
         hooks["briefing"] = e["DISCORD_WEBHOOK_BRIEFING"]
+    if e.get("DISCORD_WEBHOOK_JOURNAL"):               # 있으면 /일지를 #매매일지(나만 보는 채널)에 (없으면 #봇-상태)
+        hooks["journal"] = e["DISCORD_WEBHOOK_JOURNAL"]
     for name, url in hooks.items():
         if not url.startswith(WEBHOOK_PREFIXES):
             raise ConfigError("%s 웹후크 주소가 디스코드 주소가 아니에요 (https://discord.com/api/webhooks/ 로 시작해야 함)" % name)

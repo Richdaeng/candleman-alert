@@ -48,6 +48,8 @@ class CardTest(unittest.TestCase):
         text = "🚫 태규의 명령(/포지션)을 6시간 막음 (5분 안에 10번 넘게 부름)"
         self.assertEqual(cards.card("status", text), (text, None))
         self.assertEqual(cards.card("summary", "아무 글\n둘째 줄"), ("아무 글\n둘째 줄", None))    # 다른 채널은 손대지 않음
+        self.check("journal", "📝 일지 · 솔라나(SOL) 진입\n차트 · 확신 3/5 · 손절 $95.00\n메모: 지지선 확인", "📝 일지 · 솔라나(SOL) 진입",
+                   ["차트 · 확신 3/5 · 손절 **$95.00**", "메모: 지지선 확인"], cards.BLUE)   # #매매일지도 줄을 그대로 카드에
 
     def test_discord_put_converts_only_plain_text(self):
         d = Discord({"trade": "u1", "status": "u3"})

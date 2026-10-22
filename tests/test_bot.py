@@ -253,6 +253,12 @@ class NoteCommandTest(BotCase):
         self.run_one(note(3, 이유="차트"), now=now / 1000 + 8 * 86400)        # 7일 넘게 주문 · 체결이 없으면
         self.assertEqual(self.app.d.sent[-1], ("status", "📝 일지 · 종목 모름 진입\n차트"))
 
+    def test_goes_to_journal_channel_when_its_webhook_exists(self):
+        self.app.d.has = lambda ch: ch == "journal"                         # DISCORD_WEBHOOK_JOURNAL 을 넣은 경우
+        calls = self.run_one(note(6, 이유="뉴스 · 일정", 종목="SOL"))
+        self.assertEqual(self.app.d.sent, [("journal", "📝 일지 · 솔라나(SOL) 진입\n뉴스 · 일정")])
+        self.assertTrue(calls[0][2]["data"]["content"].endswith("\n(나만 보임 · #매매일지에도 남김)"))
+
     def test_others_refused_and_nothing_saved(self):
         calls = self.run_one(note(4, uid="42", 이유="직감"))
         self.assertEqual(calls[0][2]["data"], {"content": "🔒 /일지는 운영자만 쓸 수 있음.", "allowed_mentions": {"parse": []}, "flags": 64})

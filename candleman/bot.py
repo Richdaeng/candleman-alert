@@ -11,7 +11,7 @@
 
 /일지(10/22 댕이: "내 데이터를 모아서 개선할 수 있는 방법" → 거래한 이유를 남김)는 서버 주인 한 사람만 씁니다. 다른 사람에게는 명령 목록에도
 안 보이고(default_member_permissions "0"), 어느 채널에서 써도 답은 쓴 사람에게만 보입니다. 남긴 것은 폰의 일지(journal, kind "note")와
-#봇-상태(나만 보는 채널)에 한 줄씩 — 나중에 체결 기록과 맞춰 이유별 · 확신별 성적을 셉니다.
+#매매일지(DISCORD_WEBHOOK_JOURNAL · 없으면 #봇-상태, 둘 다 나만 보는 채널)에 한 줄씩 — 나중에 체결 기록과 맞춰 이유별 · 확신별 성적을 셉니다.
 """
 import asyncio
 import json
@@ -320,8 +320,10 @@ class Bot:
         rec = note_record(opts, int(now_s * 1000))
         store.append([rec])
         text = note_text(rec)
-        await self._reply(iid, tok, text + "\n(나만 보임 · #봇-상태에도 남김)", private=True)
-        await self.app.d.put("status", text)
+        has = getattr(self.app.d, "has", None)
+        ch = "journal" if has and has("journal") else "status"   # #매매일지 웹후크가 있으면 거기, 없으면 #봇-상태
+        await self._reply(iid, tok, text + "\n(나만 보임 · #%s에도 남김)" % ("매매일지" if ch == "journal" else "봇-상태"), private=True)
+        await self.app.d.put(ch, text)
 
     async def _reply(self, iid, tok, text, private=False):
         data = {"content": text, "allowed_mentions": {"parse": []}}

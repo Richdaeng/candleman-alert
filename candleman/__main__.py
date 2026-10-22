@@ -4,7 +4,7 @@
   python -m candleman check    설정 · 키 권한 · 웹후크를 시험 (#봇-상태에 시험 글 하나)
   python -m candleman demo     가짜 체결로 알림 글이 어떻게 보이는지 화면에만 (인터넷 안 씀)
   python -m candleman summary  지난 요약 구간의 요약을 지금 #일일-요약에 보냄
-  python -m candleman hook symbols   웹후크 주소 하나만 넣거나 바꿈 (symbols = #종목설명 · positions = #현재포지션 · briefing = #일일-경제-브리핑 · trade · summary · status)
+  python -m candleman hook symbols   웹후크 주소 하나만 넣거나 바꿈 (symbols = #종목설명 · positions = #현재포지션 · briefing = #일일-경제-브리핑 · journal = #매매일지 · trade · summary · status)
   python -m candleman briefing  오늘 아침 경제 브리핑을 지금 #일일-경제-브리핑에 올려 봄 (클라우드 글이 없으면 숫자만)
   python -m candleman bot      /포지션 명령 봇의 토큰을 넣거나 바꿈 (화면에 안 보이게)
   python -m candleman update   GitHub 의 stable 판을 받아 시험해 보고 바꿈 (다시 켜기는 termux/update.sh 가 함)
@@ -114,6 +114,7 @@ def _setup():
     vals["DISCORD_WEBHOOK_SYMBOLS"] = input("#종목설명 웹후크 주소 (없으면 그냥 Enter — 새 종목 자동 소개를 안 씀): ").strip()
     vals["DISCORD_WEBHOOK_POSITIONS"] = input("#현재포지션 웹후크 주소 (없으면 그냥 Enter — 현재 포지션 글을 안 씀): ").strip()
     vals["DISCORD_WEBHOOK_BRIEFING"] = input("#일일-경제-브리핑 웹후크 주소 (없으면 그냥 Enter — 아침 브리핑을 안 씀): ").strip()
+    vals["DISCORD_WEBHOOK_JOURNAL"] = input("#매매일지 웹후크 주소 (없으면 그냥 Enter — /일지는 #봇-상태에 남김): ").strip()
     hour = input("요약 시각 (0~23, 그냥 Enter 면 22): ").strip() or "22"
     vals["SUMMARY_HOUR"] = hour
     lines = ["# 캔들맨 알림 설정 — 이 파일은 저장소에 올리지 않아요 (.gitignore)"] + ["%s=%s" % (k, v) for k, v in vals.items() if v]
@@ -124,7 +125,8 @@ def _setup():
 
 HOOK_KEYS = {"trade": ("DISCORD_WEBHOOK_TRADE", "#실시간-매매"), "summary": ("DISCORD_WEBHOOK_SUMMARY", "#일일-요약"),
              "status": ("DISCORD_WEBHOOK_STATUS", "#봇-상태"), "symbols": ("DISCORD_WEBHOOK_SYMBOLS", "#종목설명"),
-             "positions": ("DISCORD_WEBHOOK_POSITIONS", "#현재포지션"), "briefing": ("DISCORD_WEBHOOK_BRIEFING", "#일일-경제-브리핑")}
+             "positions": ("DISCORD_WEBHOOK_POSITIONS", "#현재포지션"), "briefing": ("DISCORD_WEBHOOK_BRIEFING", "#일일-경제-브리핑"),
+             "journal": ("DISCORD_WEBHOOK_JOURNAL", "#매매일지")}
 
 
 def _write_env(lines):

@@ -11,7 +11,7 @@
 import re
 
 GREEN, RED, ORANGE, GRAY, BLUE, YELLOW, DARK_RED = 2533018, 15684432, 15105570, 9807270, 3447003, 15776011, 10038562
-CHANNELS = ("trade", "status")
+CHANNELS = ("trade", "status", "journal")     # journal(#매매일지)은 #봇-상태처럼 줄을 그대로 카드에
 _NUMBER = re.compile(r"(?<![\w*])([+−-]?\$[\d,]+(?:\.\d+)?|[+−-]?\d[\d,]*(?:\.\d+)?%)")
 
 
