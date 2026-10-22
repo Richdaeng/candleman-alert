@@ -1,4 +1,5 @@
-"""디스코드 봇 — 정해 둔 채널(기본 #잡담방)의 /포지션 · /주인장수익률 두 명령에만 답합니다. DISCORD_BOT_TOKEN 이 있을 때만 켜짐.
+"""디스코드 봇 — 정해 둔 채널(기본 #잡담방)의 /포지션 · /주인장수익률 두 명령에 답하고, 운영자 전용 /일지(거래한 이유 남기기)를
+받습니다. DISCORD_BOT_TOKEN 이 있을 때만 켜짐.
 
 웹후크는 보내기만 해서 명령을 받으려면 디스코드 게이트웨이에 붙어 있어야 합니다. 이것도 폰에서 '나가는' 연결이라
 밖에서 폰으로 들어오는 문은 생기지 않습니다. 받은 것에서는 명령 이름 · 채널 이름 · 부른 사람만 보고, 무엇도 실행하지 않습니다.
@@ -7,6 +8,10 @@
 같은 사람이 5분 안에 10번 넘게 부르면(두 명령을 합쳐 셈) 그 사람의 명령은 6시간 막습니다(서버 주인 한 사람만 예외 — 관리자
 역할을 받은 사람도 막힘). 이 규칙은 공지에 적지 않고, 막힌 사람에게는 '지금은 쓸 수 없음'만 보이며, 누가 막혔는지는 #봇-상태에만 알립니다.
 /주인장수익률은 시작 금액(START_USD)이 있을 때만 등록합니다.
+
+/일지(10/22 댕이: "내 데이터를 모아서 개선할 수 있는 방법" → 거래한 이유를 남김)는 서버 주인 한 사람만 씁니다. 다른 사람에게는 명령 목록에도
+안 보이고(default_member_permissions "0"), 어느 채널에서 써도 답은 쓴 사람에게만 보입니다. 남긴 것은 폰의 일지(journal, kind "note")와
+#봇-상태(나만 보는 채널)에 한 줄씩 — 나중에 체결 기록과 맞춰 이유별 · 확신별 성적을 셉니다.
 """
 import asyncio
 import json
@@ -16,7 +21,9 @@ import urllib.error
 import urllib.request
 from collections import deque
 
-from . import store
+from . import fmt, names, store
+from .spot import split_symbol
+from .tracker import base_of
 from .ws import WebSocket, WSClosed
 
 GATEWAY = "wss://gateway.discord.gg/?v=10&encoding=json"
@@ -24,6 +31,23 @@ API = "https://discord.com/api/v10"
 USER_AGENT = "DiscordBot (https://github.com/Richdaeng/candleman-alert, 1.0)"
 COMMAND = {"name": "포지션", "description": "운영자가 지금 들고 있는 포지션 보기", "type": 1}   # 서버 전용 명령이라 contexts 는 안 씀
 RETURN_COMMAND = {"name": "주인장수익률", "description": "운영자가 시작한 금액 대비 지금 자산과 수익률 보기", "type": 1}
+NOTE_REASONS = ("거시 경제", "뉴스 · 일정", "차트", "직감", "기타")
+NOTE_COMMAND = {
+    "name": "일지", "type": 1, "description": "운영자 전용 · 이번 거래를 왜 했는지 남기기 (나만 보임)",
+    "default_member_permissions": "0",                     # 관리자(서버 주인)에게만 보이는 명령
+    "options": [
+        {"type": 3, "name": "이유", "description": "왜 들어갔나 (정리할 때는 왜 정리했나)", "required": True,
+         "choices": [{"name": r, "value": r} for r in NOTE_REASONS]},
+        {"type": 4, "name": "확신", "description": "얼마나 확신했나 (1 낮음 ~ 5 높음)", "min_value": 1, "max_value": 5},
+        {"type": 3, "name": "때", "description": "진입 · 추가 · 정리 (비우면 진입)",
+         "choices": [{"name": w, "value": w} for w in ("진입", "추가", "정리")]},
+        {"type": 3, "name": "종목", "description": "예: EWY · SOL (비우면 마지막으로 주문 · 체결된 종목)", "max_length": 20},
+        {"type": 10, "name": "손절", "description": "생각해 둔 손절 가격", "min_value": 0},
+        {"type": 10, "name": "목표", "description": "생각해 둔 목표 가격", "min_value": 0},
+        {"type": 3, "name": "메모", "description": "한 줄 메모", "max_length": 300},
+    ],
+}
+NOTE_LOOKBACK_MS = 7 * 86_400_000      # 종목을 비우면 이만큼 안의 마지막 주문 · 체결 종목으로
 WINDOW_S, LIMIT, BLOCK_S = 5 * 60, 10, 6 * 3600
 EPHEMERAL = 1 << 6                     # 부른 사람에게만 보이는 답
 FATAL_CLOSE = {4004: "봇 토큰이 맞지 않음", 4013: "intents 값이 잘못됨", 4014: "허용되지 않은 intents"}
@@ -52,6 +76,40 @@ class RateGuard:
         return "ok"
 
 
+def last_symbol(now_ms):
+    """일지 종목을 비웠을 때: 최근 NOTE_LOOKBACK_MS 안에 마지막으로 주문하거나 체결된 종목의 기호(EWY · SOL …). 없으면 None."""
+    for r in reversed(store.read_journal(now_ms - NOTE_LOOKBACK_MS, now_ms + 1)):
+        if r.get("kind") in ("fill", "order_new") and r.get("symbol"):
+            return base_of(r["symbol"])
+        if r.get("kind") == "spot_fill" and r.get("symbol"):
+            return split_symbol(r["symbol"])[0]
+    return None
+
+
+def note_record(opts, now_ms):
+    """/일지 선택값 → 일지 한 줄 (kind "note")."""
+    sym = str(opts.get("종목") or "").strip().upper()
+    if sym.endswith("USDT") and len(sym) > 4:
+        sym = sym[:-4]
+    memo = str(opts.get("메모") or "").strip()
+    return {"kind": "note", "t": now_ms, "when": opts.get("때") or "진입", "reason": opts.get("이유"), "confidence": opts.get("확신"),
+            "symbol": sym or last_symbol(now_ms), "stop": opts.get("손절"), "target": opts.get("목표"), "memo": memo[:300] or None}
+
+
+def note_text(rec):
+    """'📝 일지 · 한국 주식 ETF(EWY) 진입' / '거시 경제 · 확신 4/5 · 손절 $150.00 · 목표 $165.00' / '메모: …'."""
+    facts = [rec["reason"]]
+    if rec.get("confidence"):
+        facts.append("확신 %d/5" % rec["confidence"])
+    for key, word in (("stop", "손절"), ("target", "목표")):
+        if rec.get(key):
+            facts.append("%s %s" % (word, fmt.price2(rec[key])))
+    lines = ["📝 일지 · %s %s" % (names.label(rec["symbol"]) if rec.get("symbol") else "종목 모름", rec["when"]), " · ".join(facts)]
+    if rec.get("memo"):
+        lines.append("메모: " + rec["memo"])
+    return "\n".join(lines)
+
+
 def whoami(token):
     """check 명령용: 토큰이 맞으면 봇 이름을 돌려줌."""
     b = Bot.__new__(Bot)
@@ -71,7 +129,8 @@ class Bot:
         self.ws = None
         self.guard = RateGuard((app.state or {}).get("cmd_blocked"))
         self.owners = {}                     # 서버 번호 → 서버 주인 번호 (제한에서 빠지는 단 한 사람 · None 이면 알아보는 중)
-        self.commands = [COMMAND] + ([RETURN_COMMAND] if getattr(app, "start_usd", None) else [])
+        self.public = [COMMAND] + ([RETURN_COMMAND] if getattr(app, "start_usd", None) else [])   # #잡담방에서 누구나 (막는 규칙 적용)
+        self.commands = self.public + [NOTE_COMMAND]
 
     def __repr__(self):                      # 실수로 찍혀도 토큰이 나오지 않게
         return "Bot(channel=%r)" % self.channel_name
@@ -224,9 +283,11 @@ class Bot:
         user = member.get("user") or d.get("user") or {}
         uid = str(user.get("id", ""))
         who = member.get("nick") or user.get("global_name") or user.get("username") or uid
+        gid = d.get("guild_id")
+        if name == NOTE_COMMAND["name"]:
+            return await self._note(d, iid, tok, uid, gid, now_s)
         if (d.get("channel") or {}).get("name") != self.channel_name:
             return await self._reply(iid, tok, "💬 /%s은 #%s에서 쓸 수 있음." % (name, self.channel_name), private=True)
-        gid = d.get("guild_id")
         if gid and gid not in self.owners:                # 시작할 때 못 알아냈으면 뒤에서 다시 (이번 답은 늦추지 않음)
             self.owners[gid] = None                       # 알아보는 중 (겹쳐 묻지 않게)
             asyncio.create_task(self._load_owner(gid))
@@ -236,7 +297,7 @@ class Bot:
                 self.app.state["cmd_blocked"] = self.guard.blocked
                 store.save_state(self.app.state)
                 await self.app.d.put("status", "🚫 %s의 명령(%s)을 6시간 막음 (5분 안에 10번 넘게 부름)"
-                                     % (who, " · ".join("/" + c["name"] for c in self.commands)))
+                                     % (who, " · ".join("/" + c["name"] for c in self.public)))
             if verdict != "ok":
                 return await self._reply(iid, tok, "⏳ 지금은 /%s을 쓸 수 없음. 나중에 다시 시도 바람." % name, private=True)
         await self.rest("POST", "/interactions/%s/%s/callback" % (iid, tok), {"type": 5}, auth=False)   # '생각 중…' 표시
@@ -248,6 +309,19 @@ class Bot:
         await self.rest("PATCH", "/webhooks/%s/%s/messages/@original" % (self.app_id, tok),
                         {"content": msg["content"][:2000], "embeds": msg.get("embeds", []), "allowed_mentions": {"parse": []}},
                         auth=False)
+
+    async def _note(self, d, iid, tok, uid, gid, now_s):
+        """/일지: 서버 주인만. 일지에 남기고, 쓴 사람에게만 보이는 답 + #봇-상태에 같은 글."""
+        if gid and not self.owners.get(gid):              # 주인을 아직 모르면 지금 물어봄 (답은 3초 안에 해야 해서 한 번만)
+            await self._load_owner(gid)
+        if not gid or uid != self.owners.get(gid):
+            return await self._reply(iid, tok, "🔒 /일지는 운영자만 쓸 수 있음.", private=True)
+        opts = {o.get("name"): o.get("value") for o in (d.get("data") or {}).get("options") or []}
+        rec = note_record(opts, int(now_s * 1000))
+        store.append([rec])
+        text = note_text(rec)
+        await self._reply(iid, tok, text + "\n(나만 보임 · #봇-상태에도 남김)", private=True)
+        await self.app.d.put("status", text)
 
     async def _reply(self, iid, tok, text, private=False):
         data = {"content": text, "allowed_mentions": {"parse": []}}

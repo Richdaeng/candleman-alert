@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from candleman import store  # noqa: E402
-from candleman.bot import BLOCK_S, COMMAND, RETURN_COMMAND, Bot, RateGuard  # noqa: E402
+from candleman.bot import BLOCK_S, COMMAND, NOTE_COMMAND, RETURN_COMMAND, Bot, RateGuard  # noqa: E402
 
 
 class RateGuardTest(unittest.TestCase):
@@ -144,7 +144,7 @@ class BotTest(BotCase):
         self.calls.clear()
         asyncio.run(self.bot._on_ready(ready))
         self.assertEqual([(m, p, a) for m, p, _, a in self.calls], [("GET", "/guilds/g1", True), ("PUT", "/applications/app2/guilds/g1/commands", True)])
-        self.assertEqual(self.calls[1][2], [COMMAND])
+        self.assertEqual(self.calls[1][2], [COMMAND, NOTE_COMMAND])
         self.assertNotIn("contexts", COMMAND)                            # 서버 전용 명령에는 안 붙임
         self.assertEqual(self.bot.owners, {"g1": OWNER})
         self.calls.clear()
@@ -178,7 +178,7 @@ class ReturnCommandTest(BotCase):
         self.calls.clear()
         asyncio.run(self.bot._on_ready({"application": {"id": "app1"}, "guilds": [{"id": "g1"}]}))
         puts = [b for m, _, b, _ in self.calls if m == "PUT"]
-        self.assertEqual(puts, [[COMMAND, RETURN_COMMAND]])                  # 옛 등록(/포지션만)과 달라서 다시 등록
+        self.assertEqual(puts, [[COMMAND, RETURN_COMMAND, NOTE_COMMAND]])    # 옛 등록(/포지션만)과 달라서 다시 등록
         self.assertTrue(all(len(c["description"]) <= 100 for c in puts[0]))
 
     def test_answers_with_return_text(self):
@@ -208,6 +208,63 @@ class ReturnCommandTest(BotCase):
         calls = self.run_one(d, now=1010.0)
         self.assertEqual(calls[0][2]["data"]["content"], "⏳ 지금은 /주인장수익률을 쓸 수 없음. 나중에 다시 시도 바람.")
         self.assertEqual(self.app.d.sent, [("status", "🚫 태규의 명령(/포지션 · /주인장수익률)을 6시간 막음 (5분 안에 10번 넘게 부름)")])
+
+
+def note(i, uid=OWNER, channel="봇-상태", **opts):
+    return {"type": 2, "id": "n%d" % i, "token": "nt%d" % i, "channel": {"name": channel}, "guild_id": "g1",
+            "data": {"name": "일지", "options": [{"name": k, "value": v} for k, v in opts.items()]},
+            "member": {"permissions": "0", "nick": "댕이", "user": {"id": uid, "username": "richdaeng"}}}
+
+
+class NoteCommandTest(BotCase):
+    """/일지 — 서버 주인만, 어느 채널에서든, 답은 쓴 사람에게만 · 일지(journal)와 #봇-상태에 남김."""
+
+    def notes(self):
+        return [r for r in store.read_journal(0, 10 ** 15) if r.get("kind") == "note"]
+
+    def test_hidden_command_with_reason_choices(self):
+        self.assertEqual(NOTE_COMMAND["default_member_permissions"], "0")    # 다른 사람에게는 명령 목록에도 안 보임
+        opts = NOTE_COMMAND["options"]
+        self.assertEqual([o["name"] for o in opts if o.get("required")], ["이유"])
+        self.assertTrue(opts[0].get("required"))                            # 꼭 넣을 것이 맨 앞 (디스코드 규칙)
+        self.assertEqual([c["value"] for c in opts[0]["choices"]], ["거시 경제", "뉴스 · 일정", "차트", "직감", "기타"])
+        self.assertTrue(all(len(o["description"]) <= 100 for o in opts))
+
+    def test_owner_note_saved_and_answered_privately(self):
+        calls = self.run_one(note(1, 이유="거시 경제", 확신=4, 종목="ewy", 손절=150, 목표=165.5, 메모="FOMC 앞 매수"))
+        text = "📝 일지 · 한국 주식 ETF(EWY) 진입\n거시 경제 · 확신 4/5 · 손절 $150.00 · 목표 $165.50\n메모: FOMC 앞 매수"
+        (m, p, body, auth), = calls
+        self.assertEqual((m, p, auth), ("POST", "/interactions/n1/nt1/callback", False))
+        self.assertEqual(body["type"], 4)
+        self.assertEqual(body["data"]["flags"], 64)                          # 쓴 사람에게만 보임
+        self.assertEqual(body["data"]["content"], text + "\n(나만 보임 · #봇-상태에도 남김)")
+        self.assertEqual(self.app.d.sent, [("status", text)])
+        rec, = self.notes()
+        self.assertEqual({k: rec[k] for k in ("when", "reason", "confidence", "symbol", "stop", "target", "memo")},
+                         {"when": "진입", "reason": "거시 경제", "confidence": 4, "symbol": "EWY", "stop": 150, "target": 165.5,
+                          "memo": "FOMC 앞 매수"})
+
+    def test_symbol_defaults_to_last_order_or_fill(self):
+        now = 1_800_000_000_000
+        store.append([{"kind": "fill", "t": now - 7_200_000, "symbol": "EWYUSDT"},
+                      {"kind": "spot_fill", "t": now - 3_600_000, "symbol": "SOLUSDT"}])
+        self.run_one(note(2, 이유="직감", 때="정리"), now=now / 1000)
+        self.assertEqual(self.app.d.sent[-1], ("status", "📝 일지 · 솔라나(SOL) 정리\n직감"))
+        self.run_one(note(3, 이유="차트"), now=now / 1000 + 8 * 86400)        # 7일 넘게 주문 · 체결이 없으면
+        self.assertEqual(self.app.d.sent[-1], ("status", "📝 일지 · 종목 모름 진입\n차트"))
+
+    def test_others_refused_and_nothing_saved(self):
+        calls = self.run_one(note(4, uid="42", 이유="직감"))
+        self.assertEqual(calls[0][2]["data"], {"content": "🔒 /일지는 운영자만 쓸 수 있음.", "allowed_mentions": {"parse": []}, "flags": 64})
+        self.assertEqual((self.notes(), self.app.d.sent), ([], []))
+
+    def test_owner_looked_up_when_unknown_and_not_rate_limited(self):
+        self.bot.owners = {}
+        calls = self.run_one(note(5, 이유="차트"))
+        self.assertEqual([p for m, p, _, _ in calls], ["/guilds/g1", "/interactions/n5/nt5/callback"])
+        for i in range(15):                                                  # 주인은 막는 규칙과 상관없음
+            self.run_one(note(10 + i, 이유="차트"), now=1000.0 + i)
+        self.assertEqual(len(self.notes()), 16)
 
 
 EWY = {"symbol": "EWYUSDT", "positionAmt": "20", "entryPrice": "152.83045678", "markPrice": "155.00000000",

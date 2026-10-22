@@ -197,7 +197,7 @@ python -m candleman check
 | `bash termux/restart.sh` | 다시 켜기 (wake lock 은 그대로) |
 | `python -m candleman summary` | 지난 요약 구간을 지금 다시 올림 |
 | `python -m candleman demo` | 알림 글 모양 보기 (인터넷 안 씀) |
-| `python -m candleman bot` | 명령 봇(/포지션 · /주인장수익률) 토큰 넣기 · 바꾸기 (안 보이게) |
+| `python -m candleman bot` | 명령 봇(/포지션 · /주인장수익률 · /일지) 토큰 넣기 · 바꾸기 (안 보이게) |
 | `python -m candleman hook symbols` | 웹후크 주소 하나만 넣거나 바꾸기 (`symbols` · `positions` · `trade` · `summary` · `status`) — 바꾼 뒤 `bash termux/restart.sh` |
 
 ## /포지션 · /주인장수익률 명령 봇 (선택)
@@ -220,6 +220,20 @@ python -m candleman check
 - 봇에는 서버 권한을 주지 않습니다(명령에 답하는 데는 필요 없음). 토큰은 `.env` 에만 둡니다.
 - 바이낸스에는 30초에 한 번까지만 묻고, 같은 사람이 너무 자주 부르면 한동안 막은 뒤 `#봇-상태`에 알립니다(서버 주인만 예외 · 관리자 역할을 받은 사람도 막힘).
 - 다른 채널에서 부르면 부른 사람에게만 '#잡담방에서 쓸 수 있음'이 보입니다. 채널을 바꾸려면 `.env` 에 `DISCORD_COMMAND_CHANNEL=채널이름`.
+
+### /일지 — 거래한 이유 남기기 (운영자 전용)
+
+진입 · 추가 · 정리할 때 왜 했는지를 남겨 두면, 나중에 체결 기록과 맞춰 "이유별 · 확신별로 어느 쪽이 벌었나"를 셀 수 있습니다
+(10/22 댕이: "내 데이터를 모아서 개선할 수 있는 방법").
+
+```
+/일지 이유:거시 경제 확신:4 종목:EWY 손절:150 목표:165 메모:FOMC 앞 매수
+```
+
+- 이유(꼭): 거시 경제 · 뉴스 · 일정 · 차트 · 직감 · 기타. 나머지는 골라서: 확신(1 ~ 5) · 때(진입 · 추가 · 정리, 비우면 진입) · 종목(비우면 최근 7일 안에
+  마지막으로 주문 · 체결된 종목) · 손절 · 목표 가격 · 메모(300자까지).
+- 서버 주인만 쓸 수 있고 다른 사람에게는 명령 목록에도 안 보입니다. 어느 채널에서 써도 답은 쓴 사람에게만 보입니다(`#봇-상태`에서 쓰는 것을 권함).
+- 남긴 것은 폰의 일지(`data/journal.jsonl`, `"kind": "note"`)와 `#봇-상태`에 한 줄씩 남습니다. 고치려면 한 번 더 쓰면 됩니다(나중 것을 씀).
 
 ## 업데이트
 
@@ -276,7 +290,7 @@ rm -rf ~/candleman-alert ~/.termux/boot/boot-candleman.sh
 - `candleman/names.py` 종목 기호 → 읽기 쉬운 이름 (비트코인(BTC) · 한국 주식 ETF(EWY) …)
 - `candleman/summary.py` 하루 요약
 - `candleman/discord.py` 디스코드로 보내기
-- `candleman/bot.py` /포지션 · /주인장수익률 명령 봇 (선택)
+- `candleman/bot.py` /포지션 · /주인장수익률 · /일지 명령 봇 (선택)
 - `candleman/app.py` 본체 (끊기면 다시 붙기 · 요약 시각)
 - `tests/` 가짜 이벤트로 하는 시험 (`python -m unittest discover -s tests`)
 
