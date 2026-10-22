@@ -33,14 +33,16 @@ USER_AGENT = "DiscordBot (https://github.com/Richdaeng/candleman-alert, 1.0)"
 COMMAND = {"name": "포지션", "description": "운영자가 지금 들고 있는 포지션 보기", "type": 1}   # 서버 전용 명령이라 contexts 는 안 씀
 RETURN_COMMAND = {"name": "주인장수익률", "description": "운영자가 시작한 금액 대비 지금 자산과 수익률 보기", "type": 1}
 NOTE_REASONS = ("거시 경제", "뉴스 · 일정", "차트", "직감", "기타")
-NOTE_WHEN = ("진입", "추가", "손절", "익절", "정리")   # 10/22 댕이: 스탑 로스 얘기를 적었는데 '때'를 비워 '진입'으로 남음 → 꼭 고르게
+NOTE_WHEN = ("진입", "추가", "정리", "스탑", "목표")   # 무엇을 했나만 — 10/22 댕이: '때'를 비워 '진입'으로 남음 → 꼭 고르게 ·
+#   "스탑로스인데 익절일 수도 있잖아?" → 손절 · 익절은 결과라서 빼고(체결 기록의 손익으로 붙임) 스탑 · 목표 주문을 건 일로
 NOTE_COMMAND = {
     "name": "일지", "type": 1, "description": "운영자 전용 · 이번 거래를 왜 했는지 #매매일지에 남기기",
     "default_member_permissions": "0",                     # 관리자(서버 주인)에게만 보이는 명령
     "options": [                                           # 꼭 넣을 것이 앞 (디스코드 규칙)
         {"type": 3, "name": "이유", "description": "왜 했나", "required": True,
          "choices": [{"name": r, "value": r} for r in NOTE_REASONS]},
-        {"type": 3, "name": "때", "description": "무엇을 했나 — 진입 · 추가 · 손절(스탑 로스 포함) · 익절 · 정리", "required": True,
+        {"type": 3, "name": "때", "description": "무엇을 했나 — 진입 · 추가 · 정리(손으로) · 스탑(걸기 · 옮기기) · 목표(익절 주문 걸기)",
+         "required": True,
          "choices": [{"name": w, "value": w} for w in NOTE_WHEN]},
         {"type": 4, "name": "확신", "description": "얼마나 확신했나 (1 낮음 ~ 5 높음)", "min_value": 1, "max_value": 5},
         {"type": 3, "name": "종목", "description": "예: EWY · SOL (비우면 마지막으로 주문 · 체결된 종목)", "max_length": 20},

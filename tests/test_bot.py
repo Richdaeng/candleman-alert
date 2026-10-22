@@ -228,7 +228,7 @@ class NoteCommandTest(BotCase):
         self.assertEqual([o["name"] for o in opts if o.get("required")], ["이유", "때"])   # 10/22: '때'를 비워 '진입'으로 잘못 남은 뒤로 꼭 고름
         self.assertTrue(opts[0].get("required") and opts[1].get("required"))  # 꼭 넣을 것이 맨 앞 (디스코드 규칙)
         self.assertEqual([c["value"] for c in opts[0]["choices"]], ["거시 경제", "뉴스 · 일정", "차트", "직감", "기타"])
-        self.assertEqual([c["value"] for c in opts[1]["choices"]], ["진입", "추가", "손절", "익절", "정리"])
+        self.assertEqual([c["value"] for c in opts[1]["choices"]], ["진입", "추가", "정리", "스탑", "목표"])   # 한 일만 (손익은 체결 기록으로)
         self.assertEqual(len({o["name"] for o in opts}), len(opts))           # 이름이 겹치지 않음 (손절가 · 목표가)
         self.assertTrue(all(len(o["description"]) <= 100 for o in opts))
 

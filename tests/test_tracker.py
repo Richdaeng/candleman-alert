@@ -102,23 +102,35 @@ class TrackerTest(unittest.TestCase):
         algo["o"]["X"] = "CANCELED"
         self.assertEqual(self.ev(algo, 1000), ["✖️ 스탑 로스 취소 · 비트코인(BTC) 롱 청산 · 가격이 $78,000에 닿으면 시장가로 0.01 BTC 정리"])
 
-    def test_triggered_stop_says_stop_loss(self):
-        """10/22: 스탑 로스가 발동해 생긴 시장가 주문이 '바로 체결(시장가)'로만 나옴 → 발동과 짝지어 '스탑 로스 발동'."""
+    def test_triggered_stop_named_by_result(self):
+        """10/22: 스탑이 발동해 생긴 시장가 주문이 '바로 체결(시장가)'로만 나옴 → 발동과 짝지음. 진입가보다 유리한 스탑(본절)은
+        '이익 보전 스탑'("스탑로스인데 익절일 수도 있잖아?") · 불리한 쪽은 '스탑 로스'."""
         self.ev(otu(80, "BUY", "MARKET", "TRADE", "FILLED", q="65.13", l="65.13", L="153.44", s="EWYUSDT"))
         stop = {"e": "ALGO_UPDATE", "o": {"aid": 81, "X": "NEW", "o": "STOP_MARKET", "s": "EWYUSDT", "S": "SELL", "q": "32.56", "tp": "154",
                                           "ps": "BOTH", "R": True}}
         self.ev(stop, 100)
-        self.tick(2100)
+        self.assertEqual(self.tick(2100), ["📝 이익 보전 스탑 걸어 둠 · 한국 주식 ETF(EWY) 롱 청산\n"
+                                           "가격이 $154에 닿으면 시장가로 32.56주 정리 · 약 $5,014어치(레버리지 포함) · 아직 발동 전"])
         stop["o"]["X"] = "TRIGGERING"                                      # 발동 (실제 주문 번호는 아직 없음)
         self.assertEqual(self.ev(stop, 60_000), [])
         self.ev(otu(82, "SELL", "MARKET", "NEW", "NEW", q="32.56", s="EWYUSDT", R=True), 50)      # 원래 종류(ot) 없이 새 시장가 주문
         out = self.ev(otu(82, "SELL", "MARKET", "TRADE", "FILLED", q="32.56", l="32.56", L="154.01", rp="18.25", s="EWYUSDT", R=True), 50)
-        self.assertEqual(out, ["🟠 한국 주식 ETF(EWY) 롱 일부 청산 · 이익 +$18.25\n$154.01에 32.56주 정리 · 남은 32.57주 · 스탑 로스 발동"])
+        self.assertEqual(out, ["🟠 한국 주식 ETF(EWY) 롱 일부 청산 · 이익 +$18.25\n$154.01에 32.56주 정리 · 남은 32.57주 · 이익 보전 스탑 발동"])
         stop["o"].update(X="FINISHED", ai="82")
         self.assertEqual(self.ev(stop, 50), [])
         # 손으로 넣은 시장가 주문은 그대로 '바로 체결(시장가)'
         out = self.ev(otu(83, "SELL", "MARKET", "TRADE", "FILLED", q="10", l="10", L="155.00", rp="5", s="EWYUSDT"), 120_000)
         self.assertTrue(out[0].endswith("· 바로 체결(시장가)"))
+        # 진입가보다 불리한 쪽의 스탑이 손실로 끝나면 '스탑 로스'
+        loss = {"e": "ALGO_UPDATE", "o": {"aid": 88, "X": "NEW", "o": "STOP_MARKET", "s": "EWYUSDT", "S": "SELL", "q": "0", "tp": "150",
+                                          "ps": "BOTH", "cp": True}}
+        self.ev(loss, 100)
+        self.assertTrue(self.tick(2100)[0].startswith("📝 스탑 로스 걸어 둠 · 한국 주식 ETF(EWY) 롱 청산"))
+        loss["o"].update(X="TRIGGERED", ai="89")
+        self.ev(loss, 60_000)
+        out = self.ev(otu(89, "SELL", "MARKET", "TRADE", "FILLED", q="22.57", l="22.57", L="149.90", rp="-79.90", s="EWYUSDT", cp=True), 50)
+        self.assertTrue(out[0].startswith("⬜ 한국 주식 ETF(EWY) 롱 청산 · 손실 −$79.90"))
+        self.assertIn("· 스탑 로스 발동", out[0])
 
     def test_trigger_event_after_order_and_take_profit(self):
         """발동 소식(실제 주문 번호 포함)이 새 주문보다 늦게 와도 체결 전이면 짝지음 · 익절은 '익절 주문 발동'."""

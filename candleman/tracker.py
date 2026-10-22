@@ -368,15 +368,24 @@ class Tracker:
             return "숏 청산" if buy else "롱 청산"
         return "롱 진입" if buy else "숏 진입"
 
-    @staticmethod
-    def _kind(o, closing):
+    def _kind(self, o, closing):
         if o.otype in ("STOP", "STOP_MARKET"):
-            return "스탑 로스" if closing else "조건부 진입 주문"
+            if not closing:
+                return "조건부 진입 주문"
+            return "이익 보전 스탑" if self._protects_profit(o) else "스탑 로스"
         if o.otype in ("TAKE_PROFIT", "TAKE_PROFIT_MARKET"):
             return "익절 주문" if closing else "조건부 진입 주문"
         if o.otype == "TRAILING_STOP_MARKET":
             return "트레일링 스탑"
         return "주문"
+
+    def _protects_profit(self, o):
+        """닫는 스탑의 발동 가격이 평균 진입가와 같거나 유리한 쪽(롱은 위 · 숏은 아래)인가 — 걸리면 이익(본절)으로 끝나는 스탑.
+        10/22 댕이: "스탑로스인데 익절일 수도 있잖아?" (본절 스탑 $154 · 진입 $153.44 → +$18.25)."""
+        pos = self.positions.get((o.symbol, o.pside))
+        if not pos or not pos.amt or not pos.entry or not o.stop:
+            return False
+        return o.stop >= pos.entry if pos.amt > 0 else o.stop <= pos.entry
 
     def _detail(self, o, closing, approx=False):
         """주문 내용을 말로: '$82,000에 0.05 BTC · 약 $4,100어치' · '가격이 $80,000에 닿으면 시장가로 모두 정리'."""
@@ -429,7 +438,11 @@ class Tracker:
         if o.liquidation:
             how = ""
         elif o.triggered:
-            how = " · %s 발동" % (o.trigger_kind or "조건 주문")
+            kind = o.trigger_kind or "조건 주문"
+            if kind in ("스탑 로스", "이익 보전 스탑"):              # 스탑의 이름은 실제 결과로 (미끄러짐으로 바뀔 수 있어서)
+                kind = "이익 보전 스탑" if rp > 0 else "스탑 로스"
+            o.trigger_kind = kind
+            how = " · %s 발동" % kind
         elif o.otype == "LIMIT":
             how = " · 걸어 둔 주문 체결"
         elif o.otype == "MARKET":
