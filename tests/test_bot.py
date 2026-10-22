@@ -237,7 +237,7 @@ class NoteCommandTest(BotCase):
         self.assertEqual((m, p, auth), ("POST", "/interactions/n1/nt1/callback", False))
         self.assertEqual(body["type"], 4)
         self.assertEqual(body["data"]["flags"], 64)                          # 쓴 사람에게만 보임
-        self.assertEqual(body["data"]["content"], text + "\n(나만 보임 · #봇-상태에도 남김)")
+        self.assertEqual(body["data"]["content"], text + "\n(이 답은 나만 보임 · #봇-상태에 남김)")
         self.assertEqual(self.app.d.sent, [("status", text)])
         rec, = self.notes()
         self.assertEqual({k: rec[k] for k in ("when", "reason", "confidence", "symbol", "stop", "target", "memo")},
@@ -257,7 +257,7 @@ class NoteCommandTest(BotCase):
         self.app.d.has = lambda ch: ch == "journal"                         # DISCORD_WEBHOOK_JOURNAL 을 넣은 경우
         calls = self.run_one(note(6, 이유="뉴스 · 일정", 종목="SOL"))
         self.assertEqual(self.app.d.sent, [("journal", "📝 일지 · 솔라나(SOL) 진입\n뉴스 · 일정")])
-        self.assertTrue(calls[0][2]["data"]["content"].endswith("\n(나만 보임 · #매매일지에도 남김)"))
+        self.assertTrue(calls[0][2]["data"]["content"].endswith("\n(이 답은 나만 보임 · #매매일지에 남김)"))
 
     def test_others_refused_and_nothing_saved(self):
         calls = self.run_one(note(4, uid="42", 이유="직감"))

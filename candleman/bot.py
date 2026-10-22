@@ -10,8 +10,9 @@
 /주인장수익률은 시작 금액(START_USD)이 있을 때만 등록합니다.
 
 /일지(10/22 댕이: "내 데이터를 모아서 개선할 수 있는 방법" → 거래한 이유를 남김)는 서버 주인 한 사람만 씁니다. 다른 사람에게는 명령 목록에도
-안 보이고(default_member_permissions "0"), 어느 채널에서 써도 답은 쓴 사람에게만 보입니다. 남긴 것은 폰의 일지(journal, kind "note")와
-#매매일지(DISCORD_WEBHOOK_JOURNAL · 없으면 #봇-상태, 둘 다 나만 보는 채널)에 한 줄씩 — 나중에 체결 기록과 맞춰 이유별 · 확신별 성적을 셉니다.
+안 보이고(default_member_permissions "0"), 어느 채널에서 써도 확인 답은 쓴 사람에게만 보입니다. 남긴 것은 폰의 일지(journal, kind "note")와
+#매매일지(DISCORD_WEBHOOK_JOURNAL — 10/22 댕이: 비공개가 아니어도 되고 글은 운영자만 쓰는 채널 · 없으면 나만 보는 #봇-상태)에 카드 한 장씩 —
+나중에 체결 기록과 맞춰 이유별 · 확신별 성적을 셉니다.
 """
 import asyncio
 import json
@@ -33,7 +34,7 @@ COMMAND = {"name": "포지션", "description": "운영자가 지금 들고 있�
 RETURN_COMMAND = {"name": "주인장수익률", "description": "운영자가 시작한 금액 대비 지금 자산과 수익률 보기", "type": 1}
 NOTE_REASONS = ("거시 경제", "뉴스 · 일정", "차트", "직감", "기타")
 NOTE_COMMAND = {
-    "name": "일지", "type": 1, "description": "운영자 전용 · 이번 거래를 왜 했는지 남기기 (나만 보임)",
+    "name": "일지", "type": 1, "description": "운영자 전용 · 이번 거래를 왜 했는지 #매매일지에 남기기",
     "default_member_permissions": "0",                     # 관리자(서버 주인)에게만 보이는 명령
     "options": [
         {"type": 3, "name": "이유", "description": "왜 들어갔나 (정리할 때는 왜 정리했나)", "required": True,
@@ -322,7 +323,7 @@ class Bot:
         text = note_text(rec)
         has = getattr(self.app.d, "has", None)
         ch = "journal" if has and has("journal") else "status"   # #매매일지 웹후크가 있으면 거기, 없으면 #봇-상태
-        await self._reply(iid, tok, text + "\n(나만 보임 · #%s에도 남김)" % ("매매일지" if ch == "journal" else "봇-상태"), private=True)
+        await self._reply(iid, tok, text + "\n(이 답은 나만 보임 · #%s에 남김)" % ("매매일지" if ch == "journal" else "봇-상태"), private=True)
         await self.app.d.put(ch, text)
 
     async def _reply(self, iid, tok, text, private=False):
