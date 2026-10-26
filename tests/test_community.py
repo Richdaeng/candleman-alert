@@ -83,6 +83,8 @@ class FakeRest:
             return CHANNELS
         if path == "/guilds/g1":
             return {"owner_id": OWNER}
+        if method == "GET" and path.endswith("/messages/@original"):
+            return {"id": "orig1"}
         if method == "GET" and "/messages?after=" in path:
             cid = path.split("/")[2]
             after = int(path.split("after=")[1].split("&")[0])
@@ -398,21 +400,26 @@ class CommandTest(Case):
 
     def test_post_rules_replaces_old_message(self):
         self.rules()
-        self.assertEqual(self.bot.replies, [("📜 규칙 글을 올리는 중…", True)])
         post, = self.rest.made("POST", "/channels/c_rules/messages")
         self.assertEqual(post[2]["components"][0]["components"][0]["custom_id"], cm.GATE_ID)
+        self.assertEqual(self.bot.replies, [("✅ #규칙에 규칙 글과 입장 버튼을 올렸음", True)])   # 확인은 쓴 사람에게만
+        self.assertEqual(self.rest.made("GET"), [])                          # 3초 안에 답하려고 역할을 다시 읽지 않음
         self.assertEqual(self.c.data["gate"], {"channel": "c_rules", "id": "m1"})
-        self.assertEqual(self.rest.made("PATCH")[-1][2]["content"], "✅ #규칙에 규칙 글과 입장 버튼을 올렸음")
         self.rules()
         self.assertEqual(self.rest.made("DELETE"), [("DELETE", "/channels/c_rules/messages/m1", None)])
         self.assertEqual(self.c.data["gate"]["id"], "m2")
-        self.assertEqual(self.rest.made("PATCH")[-1][2]["content"], "✅ #규칙에 규칙 글과 입장 버튼을 올렸음 (전에 올린 글은 지움)")
+        self.assertEqual(self.bot.replies[-1], ("✅ #규칙에 규칙 글과 입장 버튼을 올렸음 (전에 올린 글은 지움)", True))
 
-    def test_post_rules_falls_back_to_followup_without_channel_permission(self):
+    def test_post_rules_answers_in_public_without_channel_permission(self):
         self.rest.fail[("POST", "/channels/c_rules/messages")] = "디스코드 POST channels 실패: HTTP 403"
         self.rules()
-        self.assertEqual([p for m, p, _ in self.rest.made("POST", "/webhooks/")], ["/webhooks/app1/t1"])
-        self.assertEqual(self.c.data["gate"], {"channel": "c_rules", "id": "m1"})
+        cb, = self.rest.made("POST", "/interactions/")
+        self.assertEqual(cb[2]["type"], 4)
+        self.assertNotIn("flags", cb[2]["data"])                              # 명령의 답 자체가 공개 규칙 글
+        self.assertEqual(cb[2]["data"]["components"][0]["components"][0]["custom_id"], cm.GATE_ID)
+        self.assertEqual(self.rest.made("POST", "/webhooks/"), [])            # 후속 글은 '원본 메시지가 삭제되었어요' 줄이 붙어서 안 씀
+        self.assertEqual(self.c.data["gate"], {"channel": "c_rules", "id": "orig1"})
+        self.assertEqual(self.bot.replies, [])
 
     def test_post_rules_only_in_rules_channel(self):
         self.rules(channel="잡담방")
@@ -471,6 +478,51 @@ class BotWiringTest(unittest.TestCase):
         self.assertEqual(seen, [both, GUILD_MESSAGES, both, GUILD_MESSAGES])
         told = [t for _, t in self.app.d.sent if t.startswith("ℹ️ 같은 말 도배 감지는 꺼진 채로 붙음")]
         self.assertEqual(len(told), 1)
+
+    def test_reconnects_for_content_six_hours_later(self):
+        closed, beats = [], []
+
+        class WS:
+            async def send_text(self, t):
+                beats.append(t)
+
+            async def close(self):
+                closed.append(1)
+
+        async def no_wait(s):
+            return None
+        self.bot.ws, self.bot.session_intents = WS(), GUILD_MESSAGES                # 내용 없이 붙어 있음
+        self.bot.content_off_until = 2_000_000_000                                  # 아직 6시간 전 → 끊지 않음
+        with mock.patch("candleman.bot.asyncio.sleep", no_wait):
+            asyncio.run(self.bot._heartbeat(41.25))                                 # (답이 없어 두 번째에 끝남)
+        self.assertEqual((len(beats), self.bot._retry_content), (1, False))
+        self.bot.acked, self.bot.content_off_until = True, 0                        # 6시간이 지남 → 끊고 다시 붙음
+        beats.clear()
+        with mock.patch("candleman.bot.asyncio.sleep", no_wait):
+            asyncio.run(self.bot._heartbeat(41.25))
+        self.assertEqual((beats, self.bot._retry_content), ([], True))
+        self.bot.session_intents = GUILD_MESSAGES | MESSAGE_CONTENT                 # 이미 내용을 받고 있으면 그대로
+        self.bot.acked, self.bot._retry_content = True, False
+        with mock.patch("candleman.bot.asyncio.sleep", no_wait):
+            asyncio.run(self.bot._heartbeat(41.25))
+        self.assertFalse(self.bot._retry_content)
+
+        seen = []
+
+        async def session():
+            seen.append(self.bot.intents())
+            if len(seen) == 1:
+                self.bot._retry_content = True                                      # 하트비트가 일부러 끊음
+                raise ConnectionError("끊김")
+            raise asyncio.CancelledError()
+        self.bot._session = session
+        with mock.patch("candleman.bot.asyncio.sleep", no_wait), self.assertRaises(asyncio.CancelledError):
+            asyncio.run(self.bot.run_forever())
+        self.assertEqual(len(seen), 2)
+        with open(store.LOG, encoding="utf-8") as f:
+            log = f.read()
+        self.assertIn("글 내용 받기를 다시 시도하려고 다시 붙음", log)
+        self.assertNotIn("봇 오류", log)                                             # 일부러 끊은 것은 오류로 남기지 않음
 
     def test_button_and_commands_routed(self):
         asyncio.run(self.bot.handle(button(), 1000.0))

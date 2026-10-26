@@ -520,24 +520,24 @@ class Community:
 
     async def post_rules(self, d, iid, tok):
         """/규칙올리기 (서버 주인만 · #규칙에서): 규칙 글 + 입장 버튼을 올리고 전에 올린 글은 지움.
-        봇에 #규칙 글쓰기 권한이 있으면 보통 글로, 없으면 명령의 후속 글로 올림(권한이 없어도 올라가지만 '사용함' 줄이 붙음)."""
+        봇에 #규칙 글쓰기 권한이 있으면 보통 글로 올리고 확인은 쓴 사람에게만. 권한이 없으면 명령의 답 자체를 공개 글로
+        (위에 '…님이 /규칙올리기 사용' 줄이 붙음 · 후속 글로 올리면 '원본 메시지가 삭제되었어요' 줄이 붙어서 쓰지 않음).
+        명령에는 3초 안에 답해야 해서 역할 이름은 켤 때 읽어 둔 것을 씀."""
         gid = d.get("guild_id")
         ch = d.get("channel") or {}
         cid = str(ch.get("id") or d.get("channel_id") or "")
         if ch.get("name") != GATE_CHANNEL:
             return await self.bot._reply(iid, tok, "📜 /규칙올리기는 #%s에서 써 주세요." % GATE_CHANNEL, private=True)
-        await self.bot._reply(iid, tok, "📜 규칙 글을 올리는 중…", private=True)
-        try:
-            await self.load(gid)
-        except Exception as e:
-            store.log("서버 역할 읽기 실패(기본 이름으로 올림): %s" % e)
         msg = rules_message((self.roles.get(gid) or ({}, None))[0])
+        old = self.data.get("gate") or {}
         try:
             posted = await self.bot.rest("POST", "/channels/%s/messages" % cid, msg)
+            await self.bot._reply(iid, tok, "✅ #%s에 규칙 글과 입장 버튼을 올렸음" % GATE_CHANNEL + (" (전에 올린 글은 지움)" if old.get("id") else ""),
+                                  private=True)
         except Exception as e:
-            store.log("#규칙 글쓰기 권한 없음 → 후속 글로: %s" % e)
-            posted = await self.bot.rest("POST", "/webhooks/%s/%s" % (self.bot.app_id, tok), msg, auth=False)
-        old = self.data.get("gate") or {}
+            store.log("#규칙 글쓰기 권한 없음 → 명령의 답으로 올림: %s" % e)
+            await self.bot.rest("POST", "/interactions/%s/%s/callback" % (iid, tok), {"type": 4, "data": msg}, auth=False)
+            posted = await self.bot.rest("GET", "/webhooks/%s/%s/messages/@original" % (self.bot.app_id, tok), auth=False)
         if old.get("id") and str(old["id"]) != str(posted.get("id")):
             try:
                 await self.bot.rest("DELETE", "/channels/%s/messages/%s" % (old["channel"], old["id"]))
@@ -545,6 +545,3 @@ class Community:
                 store.log("전 규칙 글 지우기 실패: %s" % e)
         self.data["gate"] = {"channel": cid, "id": str(posted.get("id") or "")}
         store.save_state(self.app.state)
-        await self.bot.rest("PATCH", "/webhooks/%s/%s/messages/@original" % (self.bot.app_id, tok),
-                            {"content": "✅ #%s에 규칙 글과 입장 버튼을 올렸음" % GATE_CHANNEL + (" (전에 올린 글은 지움)" if old.get("id") else "")},
-                            auth=False)

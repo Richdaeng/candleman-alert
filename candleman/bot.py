@@ -144,6 +144,8 @@ class Bot:
         self.community = Community(self) if community else None     # #규칙 입장 · 레벨 · 도배 (community.py)
         self.content_off_until = 0           # 글 내용 받기가 거절된 뒤 다시 시도할 시각 (그 전에는 내용 없이 붙음)
         self.content_told = False
+        self.session_intents = 0             # 지금 연결에서 받기로 한 것 (내용 없이 붙었으면 시각이 되면 다시 붙어 봄)
+        self._retry_content = False
         self.public = [COMMAND] + ([RETURN_COMMAND] if getattr(app, "start_usd", None) else [])   # #잡담방에서 누구나 (막는 규칙 적용)
         if self.community:
             self.public += [LEVEL_COMMAND, RANK_COMMAND]
@@ -198,6 +200,7 @@ class Bot:
         backoff = 2
         while True:
             asked = self.intents()
+            self._retry_content = False
             try:
                 await self._session()
                 backoff = 2
@@ -215,9 +218,15 @@ class Bot:
                     store.log("봇 멈춤: %s" % FATAL_CLOSE[e.code])
                     await self.app.d.put("status", "⛔ 명령 봇을 멈춤: %s. python -m candleman bot 으로 토큰을 다시 넣기." % FATAL_CLOSE[e.code])
                     return
-                store.log("봇 연결 끊김: %s" % e.code)
+                if not self._retry_content:
+                    store.log("봇 연결 끊김: %s" % e.code)
             except Exception as e:
-                store.log("봇 오류: %s %s" % (type(e).__name__, str(e)[:160]))
+                if not self._retry_content:
+                    store.log("봇 오류: %s %s" % (type(e).__name__, str(e)[:160]))
+            if self._retry_content:                             # 일부러 끊음 (내용 없이 붙은 지 6시간 → 글 내용 받기를 다시 시도)
+                store.log("글 내용 받기를 다시 시도하려고 다시 붙음")
+                await asyncio.sleep(1)
+                continue
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 120)
 
@@ -231,7 +240,8 @@ class Bot:
             interval = hello["d"]["heartbeat_interval"] / 1000.0
             self.acked = True
             beat = asyncio.create_task(self._heartbeat(interval))
-            await self.ws.send_text(json.dumps({"op": 2, "d": {"token": self._token, "intents": self.intents(),
+            self.session_intents = self.intents()
+            await self.ws.send_text(json.dumps({"op": 2, "d": {"token": self._token, "intents": self.session_intents,
                                                               "properties": {"os": "android", "browser": "candleman", "device": "candleman"}}}))
             while True:
                 msg = json.loads(await asyncio.wait_for(self.ws.recv(), interval * 3))
@@ -263,6 +273,11 @@ class Bot:
         await asyncio.sleep(interval * random.random())
         while True:
             if not self.acked:                   # 앞 하트비트에 답이 없으면 연결이 죽은 것 → 끊고 다시 붙음
+                if self.ws:
+                    await self.ws.close()
+                return
+            if self.intents() & ~self.session_intents & MESSAGE_CONTENT:   # 내용 없이 붙은 지 6시간 → 다시 붙어 내용 받기 시도
+                self._retry_content = True
                 if self.ws:
                     await self.ws.close()
                 return
