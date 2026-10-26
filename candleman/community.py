@@ -6,8 +6,9 @@
 - 레벨: 글을 쓰면 1분에 한 번 20점. Lv.n 이 되려면 n × n × 100점(Lv.10 = 10,000점이 최고). 레벨 역할은 이름의 'Lv.숫자'로 찾음
   (이모지 · 색은 디스코드에서 바꿔도 됨). 오르면 그 채널에 한 줄(울리지 않음) + 역할을 바꿈. 봇이 꺼져 있던 사이의 글은
   다시 붙을 때 채널 기록을 읽어 채움(이때는 레벨 업 글을 올리지 않음).
-- 도배: 5초 안에 5개 이상 · 같은 말 4번 되풀이(1분 안) · 한 글에 같은 말 10번 이상 → 그 글들을 지우고 1시간 타임아웃,
-  24시간 안에 또 하면 밴. 서버 주인은 빼고, #봇-상태에 알림.
+- 도배: 5초 안에 5개 이상 · 같은 말을 4번 연속(1분 안) → 그 글들을 지우고 1시간 타임아웃, 24시간 안에 또 하면 밴.
+  '같은 말'은 글자를 늘인 것('ㅋㅋ' · 'ㅋㅋㅋ') · 문장 부호 · 띄어쓰기 차이를 같게 봄(10/26 댕이: "ㅋㅋ 하고 엔터, ㅋㅋㅋ 하고 엔터").
+  글 하나 안의 'ㅋㅋㅋㅋ'는 도배가 아님. 서버 주인은 빼고, #봇-상태에 알림.
 
 글 내용은 '같은 말인지' 견줄 때만 메모리에서 잠깐 보고 저장하지 않습니다. 저장하는 것: 사람별 점수 · 마지막으로 센 시각 ·
 표시 이름 · 채널별 어디까지 셌는지 · 도배 처리 시각 · 규칙 글 위치.
@@ -15,7 +16,8 @@
 import asyncio
 import re
 import time
-from collections import Counter, deque
+import unicodedata
+from collections import deque
 from datetime import datetime, timezone
 
 from . import store
@@ -29,8 +31,7 @@ GATE_CHANNEL = "규칙"
 GATE_ID = "gate:agree"
 VERIFIED_WORD = "인증"              # 입장한 사람에게 주는 '✅ 인증' 역할 (이름으로 찾음)
 FAST_N, FAST_MS = 5, 5_000          # 5초 안에 5개 이상
-SAME_N, SAME_MS = 4, 60_000         # 같은 말 4번 (1분 안)
-WORD_N = 10                         # 한 글에 같은 말 10번 이상
+SAME_N, SAME_MS = 4, 60_000         # 같은 말 4번 연속 (1분 안)
 STRIKE_MS = 24 * 3_600_000          # 이 안에 두 번째 도배면 밴
 TIMEOUT_MS = 3_600_000              # 첫 도배는 1시간 타임아웃
 QUIET_MS = 30_000                   # 한 번 처리한 사람은 이만큼 다시 처리하지 않음 (지우는 사이 들어온 글로 겹치지 않게)
@@ -39,9 +40,9 @@ RESYNC_S = 15 * 60                  # 레벨 역할을 못 맞춘 사람이 남�
 EPHEMERAL = 1 << 6
 DISCORD_EPOCH_MS = 1_420_070_400_000
 LV_RE = re.compile(r"Lv\.?\s*(\d{1,2})(?!\d)", re.I)
-REPEAT_RE = re.compile(r"(.{2,10}?)\1{%d,}" % (WORD_N - 1), re.S)
+RUN_RE = re.compile(r"(.)\1+", re.S)
 BLUE, GOLD = 3447003, 15844367
-REASONS = {"fast": "5초 안에 5개 이상", "same": "같은 말 되풀이", "word": "한 글에 같은 말 되풀이"}
+REASONS = {"fast": "5초 안에 5개 이상", "same": "같은 말 4번 연속"}
 
 LEVEL_COMMAND = {"name": "레벨", "description": "내 레벨 · 경험치 보기 (다른 사람도 고를 수 있음)", "type": 1,
                  "options": [{"type": 6, "name": "멤버", "description": "볼 사람 (비우면 나)"}]}
@@ -54,8 +55,8 @@ RULES = (
     "2. 광고 · 홍보 금지 — 다른 디스코드 · 텔레그램 · 오픈채팅 링크, 리딩방 · 수익 보장 글은 자동으로 막힘",
     "3. 사기 조심 — 운영자는 DM으로 입금 · 지갑 연결 · 개인 정보를 절대 요구하지 않음",
     "4. 투자 권유 아님 — 올라오는 포지션 · 글은 개인 기록이고, 투자 판단과 책임은 각자에게 있음",
-    "5. 도배 · 멘션 남발 금지 — 5초 안에 5개 이상 쓰거나 같은 말을 되풀이하면 자동으로 1시간 타임아웃, 24시간 안에 또 하면 밴 · "
-    "한 글에 멘션 5개 이상은 자동으로 막힘",
+    "5. 도배 · 멘션 남발 금지 — 5초 안에 5개 이상 쓰거나 같은 말을 4번 연속으로 보내면(ㅋㅋ · ㅋㅋㅋ 처럼 늘인 말도) "
+    "자동으로 1시간 타임아웃, 24시간 안에 또 하면 밴 · 한 글에 멘션 5개 이상은 자동으로 막힘 · @everyone · @here 는 운영자만",
     "6. 개인 정보 올리지 않기 — 연락처 · 계좌 · 지갑 주소 등(본인 것도)",
     "7. 어기면 경고 → 타임아웃 → 추방 순으로 처리",
 )
@@ -106,20 +107,12 @@ def level_name(levels, lv):
 
 
 # ---------------------------------------------------------------------- 도배
-def _norm(content):
-    return "".join((content or "").split()).lower()
-
-
-def word_spam(content):
-    """한 글에 같은 말을 WORD_N 번 넘게 되풀이했나 (띄어 쓴 '가즈아 가즈아 …' · 붙여 쓴 '가즈아가즈아…' 모두).
-    'ㅋㅋㅋㅋ' · '🚀🚀🚀'처럼 한 글자만 되풀이한 것은 웃음 · 응원으로 보고 뺌."""
-    toks = (content or "").lower().split()
-    if len(toks) >= WORD_N:
-        word, n = Counter(toks).most_common(1)[0]
-        if n >= WORD_N and n >= 0.7 * len(toks) and len(set(word)) >= 2:
-            return True
-    m = REPEAT_RE.search(_norm(content))
-    return bool(m and len(set(m.group(1))) >= 2)
+def same_form(content):
+    """같은 말인지 견줄 꼴: 작은 글자로 · 띄어쓰기 · 문장 부호를 빼고 · 이어진 같은 글자는 하나로.
+    'ㅋㅋ' = 'ㅋㅋㅋ' = 'ㅋ' · '가즈아아아!' = '가즈 아' = '가즈아' · '🚀🚀' = '🚀'. 글자가 하나도 안 남으면(사진만 · '!!!') 빈 값."""
+    kept = "".join(ch for ch in (content or "").lower()
+                   if ch not in "~～^" and not unicodedata.category(ch).startswith(("P", "Z", "C", "M")))   # '가즈아~' · '^^' 의 ~ ^ 도 뺌
+    return RUN_RE.sub(r"\1", kept)
 
 
 def _group(entries):
@@ -130,7 +123,7 @@ def _group(entries):
 
 
 class FloodGuard:
-    """사람별 최근 글(시각 · 글 번호 · 채널 · 공백을 뺀 내용)로 도배를 알아봄. 내용은 메모리에만 1분 동안."""
+    """사람별 최근 글(시각 · 글 번호 · 채널 · 같은 말 꼴)로 도배를 알아봄. 내용은 메모리에만 1분 동안."""
 
     def __init__(self, strikes=None):
         self.recent = {}
@@ -138,10 +131,10 @@ class FloodGuard:
         self.strikes = {str(k): [int(t) for t in v] for k, v in (strikes or {}).items()}
 
     def check(self, uid, t, mid, cid, content):
-        """도배면 (까닭, {채널: [지울 글 번호]}), 아니면 None. 까닭: fast · same · word."""
+        """도배면 (까닭, {채널: [지울 글 번호]}), 아니면 None. 까닭: fast(5초 안에 5개 이상) · same(같은 말 4번 연속)."""
         dq = self.recent.setdefault(uid, deque(maxlen=30))
-        norm = _norm(content)
-        dq.append((t, str(mid), str(cid), norm))
+        form = same_form(content)
+        dq.append((t, str(mid), str(cid), form))
         while dq and t - dq[0][0] > SAME_MS:
             dq.popleft()
         if t < self.quiet.get(uid, 0):
@@ -150,10 +143,8 @@ class FloodGuard:
         if len(fast) >= FAST_N:
             return "fast", _group(fast)
         last = list(dq)[-SAME_N:]
-        if norm and len(last) == SAME_N and all(e[3] == norm for e in last):
+        if form and len(last) == SAME_N and all(e[3] == form for e in last):
             return "same", _group(last)
-        if word_spam(content):
-            return "word", _group([dq[-1]])
         return None
 
     def strike(self, uid, now):

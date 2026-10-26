@@ -162,6 +162,8 @@ class MathTest(unittest.TestCase):
         rules, lv = m["embeds"]
         self.assertEqual(rules["description"].split("\n")[0], "1. 상호 존중 및 존대를 원칙으로 함 — 욕설 · 비하 · 인신공격 금지")
         self.assertEqual(len(rules["description"].split("\n")), 7)
+        self.assertIn("같은 말을 4번 연속으로 보내면(ㅋㅋ · ㅋㅋㅋ 처럼 늘인 말도)", rules["description"])
+        self.assertTrue(rules["description"].split("\n")[4].endswith("@everyone · @here 는 운영자만"))
         self.assertIn("🥚 Lv.0 → 🐜 Lv.1 → 🦐 Lv.2 → 🦀 Lv.3 → 🐙 Lv.4 → 🐟 Lv.5", lv["description"])
         self.assertIn("→ 🐬 Lv.6 → 🦈 Lv.7 → 🐋 Lv.8 → 🐳 Lv.9 → 🔱 Lv.10", lv["description"])
         btn = m["components"][0]["components"][0]
@@ -190,21 +192,33 @@ class FloodTest(unittest.TestCase):
         g3 = cm.FloodGuard()                                                 # 1분이 넘게 띄엄띄엄이면 아님
         self.assertEqual([g3.check("u", T0 + i * 25_000, "m%d" % i, "c", "가즈아") for i in range(4)], [None] * 4)
 
-    def test_same_word_many_times_in_one_message(self):
-        self.assertTrue(cm.word_spam(" ".join(["가즈아"] * 10)))
-        self.assertTrue(cm.word_spam("가즈아" * 10))
-        self.assertTrue(cm.word_spam("떡상 " * 12 + "ㄱㄱ"))
-        self.assertFalse(cm.word_spam("ㅋ" * 60))                             # 웃음은 아님
-        self.assertFalse(cm.word_spam("ㅋㅋ " * 15))
-        self.assertFalse(cm.word_spam("🚀" * 30))
-        self.assertFalse(cm.word_spam("오늘 FOMC 앞이라 비트코인 롱은 조금만 들고 이더리움은 지켜보는 중임"))
+    def run_texts(self, texts, gap_ms=2_000):
         g = cm.FloodGuard()
-        self.assertEqual(g.check("u", T0, "m1", "c", "가즈아 " * 10), ("word", {"c": ["m1"]}))
+        return [g.check("u", T0 + i * gap_ms, "m%d" % i, "c", t) for i, t in enumerate(texts)]
+
+    def test_laughs_entered_four_times_in_a_row(self):          # 10/26 댕이: "ㅋㅋ 하고 엔터, ㅋㅋㅋ 하고 엔터"
+        got = self.run_texts(["ㅋㅋ", "ㅋㅋㅋ", "ㅋㅋ", "ㅋㅋㅋ"])
+        self.assertEqual(got[:3], [None] * 3)
+        self.assertEqual(got[3], ("same", {"c": ["m0", "m1", "m2", "m3"]}))
+        self.assertEqual(self.run_texts(["가즈아!", "가즈아아아", "가즈 아", "가즈아~~"])[3][0], "same")
+        self.assertEqual(self.run_texts(["🚀", "🚀🚀", "🚀", "🚀🚀🚀"])[3][0], "same")
+        self.assertEqual(self.run_texts(["ㅇㅇ", "ㅇㅇ", "ㅇㅇ"]), [None] * 3)                 # 세 번까지는 괜찮음
+
+    def test_not_flood(self):
+        self.assertEqual(self.run_texts(["ㅋ" * 60, "가즈아 " * 10, "🚀" * 30]), [None] * 3)   # 글 하나 안의 되풀이는 도배 아님
+        self.assertEqual(self.run_texts(["ㅋㅋ", "ㅋㅋㅋ", "아 진짜 ㅋㅋ", "ㅋㅋ", "ㅋㅋㅋ"]), [None] * 5)   # 중간에 다른 말
+        self.assertEqual(self.run_texts(["", "", "", ""]), [None] * 4)                     # 사진만 올린 글은 내용으로 안 봄
+        self.assertEqual(self.run_texts(["!!!", "?!", "!!", "..."]), [None] * 4)
+
+    def test_same_form(self):
+        self.assertEqual([cm.same_form(t) for t in ("ㅋㅋㅋ", "가즈아아아!", "가즈 아", "가즈아~~", "❤️❤️", "!!!", "^^", "BTC 롱!", "btc롱")],
+                         ["ㅋ", "가즈아", "가즈아", "가즈아", "❤", "", "", "btc롱", "btc롱"])
 
     def test_timeout_then_ban_within_a_day(self):
         g = cm.FloodGuard()
         self.assertEqual(g.strike("u", T0), "timeout")
-        self.assertIsNone(g.check("u", T0 + 1000, "m9", "c", "가즈아 " * 10))   # 처리한 직후 30초는 다시 처리하지 않음
+        quick = [g.check("u", T0 + 1000 + i * 500, "m%d" % i, "c", "글%d" % i) for i in range(5)]
+        self.assertEqual(quick, [None] * 5)                                  # 처리한 직후 30초는 다시 처리하지 않음
         self.assertEqual(g.strike("u", T0 + 3_600_000), "ban")
         self.assertEqual(g.strike("v", T0), "timeout")
         self.assertEqual(g.strike("v", T0 + 25 * 3_600_000), "timeout")      # 24시간이 지나면 다시 첫 번째

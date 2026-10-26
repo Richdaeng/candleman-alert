@@ -38,7 +38,7 @@ def now_ms():
 class App:
     def __init__(self, cfg):
         self.b = Binance(cfg["key"], cfg["secret"])
-        self.d = Discord(cfg["hooks"], log=store.log)
+        self.d = Discord(cfg["hooks"], log=store.log, ping=cfg.get("ping", ()))
         self.t = Tracker()
         self.hour = cfg["summary_hour"]
         self.cfg = cfg

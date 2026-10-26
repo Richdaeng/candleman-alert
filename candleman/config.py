@@ -7,6 +7,8 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENV_PATH = os.path.join(HERE, ".env")
 DATA_DIR = os.path.join(HERE, "data")
 WEBHOOK_PREFIXES = ("https://discord.com/api/webhooks/", "https://discordapp.com/api/webhooks/")
+PING_DEFAULT = "trade,positions,summary,briefing"      # 글마다 @everyone 으로 울리는 채널 (10/26 댕이)
+PING_CHANNELS = ("trade", "positions", "summary", "briefing", "symbols", "journal")   # #봇-상태(status)는 넣을 수 없음
 
 
 class ConfigError(Exception):
@@ -57,6 +59,7 @@ def load(path=ENV_PATH):
             "bot_token": e.get("DISCORD_BOT_TOKEN") or None,              # 있으면 /포지션 명령 봇을 켬
             "command_channel": e.get("DISCORD_COMMAND_CHANNEL") or "잡담방",
             "community": e.get("COMMUNITY", "1").strip() != "0",         # 봇의 #규칙 입장 · 레벨 · 도배 처리 (0 이면 끔)
+            "ping": _ping(e),                                             # 글마다 @everyone 을 붙이는 채널들
             "auto_update": e.get("AUTO_UPDATE", "1").strip() != "0",      # 매일 stable 판 확인 (0 이면 끔)
             "spot": e.get("SPOT", "1").strip() != "0",                    # 현물 체결 알림 · 보유 (0 이면 끔)
             "briefing_hour": _hour(e, "BRIEFING_HOUR", "8"),              # 아침 경제 브리핑 시각
@@ -64,6 +67,18 @@ def load(path=ENV_PATH):
             "start_usd": _money(e, "START_USD", "7800"),                  # 수익률 기준 시작 금액 (10/21 댕이: $7,800 으로 시작 · 0 이면 끔)
             "start_year": _year(e, "START_YEAR", "2026"),                 # 그 금액이 기준인 해. 다음 해부터는 1월 1일 0시의 전체 자산
             "update_hour": _hour(e, "UPDATE_HOUR", "5")}
+
+
+def _ping(e):
+    """PING_EVERYONE=trade,positions,… → 채널 이름들. 0 · off · 빈 값이면 아무 데도 안 울림."""
+    raw = (e.get("PING_EVERYONE", PING_DEFAULT) or "").strip().lower()
+    if raw in ("", "0", "off", "none"):
+        return ()
+    names = tuple(dict.fromkeys(s.strip() for s in raw.split(",") if s.strip()))
+    bad = [n for n in names if n not in PING_CHANNELS]
+    if bad:
+        raise ConfigError("PING_EVERYONE 에 모르는 채널: %s (넣을 수 있는 것: %s)" % (", ".join(bad), ", ".join(PING_CHANNELS)))
+    return names
 
 
 def _year(e, key, default):
