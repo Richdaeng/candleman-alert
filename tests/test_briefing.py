@@ -27,10 +27,10 @@ def fake_kofia(url, body):
 
 def brief_json(date="2026-10-22", **k):
     j = {"date": date, "overnight": ["미국 증시: 나스닥 +1.2% · S&P500 +0.8%", "비트코인 $67,200 (+2.1%)"],
-         "schedule": [{"when": "10/23 (금)", "what": "한국은행 금통위 · 기준금리 결정", "impact": 3, "why": "국내 금리 · 환율"},
-                      {"when": "10/28 (수)", "what": "미국 FOMC 기준금리 결정", "impact": "5"},
-                      {"when": "10/29 (목)", "what": "아마존 실적 발표", "impact": 9},           # 이상한 점수는 별 없이
-                      "11/3 (화) 미국 중간선거"]}
+         "schedule": [{"when": "10/23 (금) 10:00", "what": "한국은행 금통위 · 기준금리 결정", "impact": 3, "why": "국내 금리 · 환율"},
+                      {"when": "10/29 (목) 03:00", "what": "미국 FOMC 기준금리 결정", "impact": "5"},     # 현지 10/28 14:00 → 한국 시각
+                      {"when": "10/30 (금) 05시쯤", "what": "아마존 실적 발표", "impact": 9},           # 이상한 점수는 별 없이
+                      "11/4 (수) 오전 미국 중간선거 개표"]}
     j.update(k)
     return json.dumps(j, ensure_ascii=False)
 
@@ -59,20 +59,20 @@ class BriefTest(unittest.TestCase):
         night, plan = briefing.parse_brief(brief_json(overnight=["가" * 200] + ["줄"] * 10), TODAY)
         self.assertEqual(len(night), briefing.MAX_LINES)
         self.assertEqual(len(night[0]), briefing.MAX_CHARS)
-        self.assertEqual(plan, ["★★★☆☆ 3점 · **10/23 (금)** 한국은행 금통위 · 기준금리 결정",
-                                "★★★★★ 5점 · **10/28 (수)** 미국 FOMC 기준금리 결정",
-                                "**10/29 (목)** 아마존 실적 발표", "11/3 (화) 미국 중간선거"])
+        self.assertEqual(plan, ["★★★☆☆ 3점 · **10/23 (금) 10:00** 한국은행 금통위 · 기준금리 결정",
+                                "★★★★★ 5점 · **10/29 (목) 03:00** 미국 FOMC 기준금리 결정",
+                                "**10/30 (금) 05시쯤** 아마존 실적 발표", "11/4 (수) 오전 미국 중간선거 개표"])
 
     def test_compose(self):
         rows = briefing.kofia_rows(TODAY, TODAY, fetch=fake_kofia)
         m = briefing.compose(TODAY, rows, briefing.parse_brief(brief_json(), TODAY))
         self.assertEqual(m["content"], "🗞️ **10/22 (목) 아침 경제 브리핑**")
         self.assertEqual([c["title"] for c in m["embeds"]], ["💳 신용 · 미수 잔고 (10/19 월 기준)", "🌙 밤사이",
-                                                            "📅 다가오는 일정 · 중요도 5점 만점"])
+                                                            "📅 다가오는 일정 (한국 시각) · 중요도 5점 만점"])
         self.assertEqual(m["embeds"][1]["description"], "· 미국 증시: 나스닥 +1.2% · S&P500 +0.8%\n· 비트코인 $67,200 (+2.1%)")
         self.assertEqual(m["embeds"][-1]["footer"]["text"], briefing.STAR_NOTE + "\n" + briefing.FOOTER)  # 별 뜻 + AI 정리
-        plain = briefing.compose(TODAY, rows, briefing.parse_brief(brief_json(schedule=["11/3 (화) 미국 중간선거"]), TODAY))
-        self.assertEqual(plain["embeds"][-1]["title"], "📅 다가오는 일정")                   # 별이 없으면 설명도 없음
+        plain = briefing.compose(TODAY, rows, briefing.parse_brief(brief_json(schedule=["11/4 (수) 오전 미국 중간선거 개표"]), TODAY))
+        self.assertEqual(plain["embeds"][-1]["title"], "📅 다가오는 일정 (한국 시각)")       # 별이 없으면 설명도 없음 · 일정은 모두 한국 시각
         self.assertEqual(plain["embeds"][-1]["footer"]["text"], briefing.FOOTER)
         bare = briefing.compose(TODAY, rows, None)
         self.assertTrue(bare["content"].endswith("밤사이 소식 · 일정은 오늘 준비되지 않음"))

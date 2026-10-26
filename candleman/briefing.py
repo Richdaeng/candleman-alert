@@ -147,7 +147,7 @@ def compose(today, rows, brief):
             cards.append({"title": "🌙 밤사이", "description": "\n".join("· " + s for s in night), "color": COLOR})
         if plan:
             rated = any(p.startswith(("★", "☆")) for p in plan)
-            cards.append({"title": "📅 다가오는 일정" + (" · 중요도 5점 만점" if rated else ""), "description": "\n".join(plan),
+            cards.append({"title": "📅 다가오는 일정 (한국 시각)" + (" · 중요도 5점 만점" if rated else ""), "description": "\n".join(plan),
                           "color": COLOR})
     if cards:
         text = FOOTER if brief else "투자 권유 아님 · 숫자: 금융투자협회"
