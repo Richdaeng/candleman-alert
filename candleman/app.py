@@ -72,7 +72,8 @@ class App:
         asyncio.create_task(self.scheduler())
         if self.cfg.get("bot_token"):                 # /포지션 명령 봇 (토큰을 넣었을 때만)
             from .bot import Bot
-            asyncio.create_task(Bot(self.cfg["bot_token"], self, self.cfg.get("command_channel") or "잡담방").run_forever())
+            asyncio.create_task(Bot(self.cfg["bot_token"], self, self.cfg.get("command_channel") or "잡담방",
+                                    community=self.cfg.get("community", True)).run_forever())
         await self.stream_forever()
 
     async def bootstrap(self):

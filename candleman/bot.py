@@ -3,9 +3,13 @@
 
 웹후크는 보내기만 해서 명령을 받으려면 디스코드 게이트웨이에 붙어 있어야 합니다. 이것도 폰에서 '나가는' 연결이라
 밖에서 폰으로 들어오는 문은 생기지 않습니다. 받은 것에서는 명령 이름 · 채널 이름 · 부른 사람만 보고, 무엇도 실행하지 않습니다.
-봇에는 서버 권한을 하나도 주지 않습니다(명령에 답하는 데는 권한이 필요 없음).
 
-같은 사람이 5분 안에 10번 넘게 부르면(두 명령을 합쳐 셈) 그 사람의 명령은 6시간 막습니다(서버 주인 한 사람만 예외 — 관리자
+커뮤니티 기능(COMMUNITY=1, 기본 켬 · 10/26 댕이)은 community.py: #규칙 입장 버튼 · 레벨(/레벨 · /순위) · 도배 처리 · /규칙올리기.
+이것 때문에 서버 글도 받고(GUILD_MESSAGES) 같은 말 도배를 보려고 글 내용도 받습니다(MESSAGE_CONTENT — 개발자 포털에서 켜야 함,
+안 켜져 있으면 내용 없이 붙고 '5초에 5개' 도배만 봄). 권한은 🤖 봇 역할에 운영자가 줌: 역할 관리(입장 · 레벨) ·
+메시지 관리 · 멤버 타임아웃 · 멤버 차단(도배). 권한이 없으면 그 일만 못 하고 #봇-상태에 한 번 알림.
+
+같은 사람이 5분 안에 10번 넘게 부르면(#잡담방 명령을 모두 합쳐 셈) 그 사람의 명령은 6시간 막습니다(서버 주인 한 사람만 예외 — 관리자
 역할을 받은 사람도 막힘). 이 규칙은 공지에 적지 않고, 막힌 사람에게는 '지금은 쓸 수 없음'만 보이며, 누가 막혔는지는 #봇-상태에만 알립니다.
 /주인장수익률은 시작 금액(START_USD)이 있을 때만 등록합니다.
 
@@ -19,10 +23,12 @@ import json
 import random
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import deque
 
 from . import fmt, names, store
+from .community import LEVEL_COMMAND, RANK_COMMAND, RULES_COMMAND, Community
 from .spot import split_symbol
 from .tracker import base_of
 from .ws import WebSocket, WSClosed
@@ -55,6 +61,8 @@ NOTE_LOOKBACK_MS = 7 * 86_400_000      # 종목을 비우면 이만큼 안의 �
 WINDOW_S, LIMIT, BLOCK_S = 5 * 60, 10, 6 * 3600
 EPHEMERAL = 1 << 6                     # 부른 사람에게만 보이는 답
 FATAL_CLOSE = {4004: "봇 토큰이 맞지 않음", 4013: "intents 값이 잘못됨", 4014: "허용되지 않은 intents"}
+GUILD_MESSAGES, MESSAGE_CONTENT = 1 << 9, 1 << 15   # 서버 글 받기 · 글 내용 받기(개발자 포털에서 켜야 하는 것)
+CONTENT_RETRY_S = 6 * 3600             # 글 내용 받기가 거절되면 이만큼 뒤에 다시 시도 (포털에서 켰을 때를 위해)
 
 
 class RateGuard:
@@ -123,7 +131,7 @@ def whoami(token):
 
 
 class Bot:
-    def __init__(self, token, app, channel_name="잡담방"):
+    def __init__(self, token, app, channel_name="잡담방", community=False):
         self._token = token
         self.app = app                       # app.positions_message() · app.d(디스코드 웹후크) · app.state 를 씀
         self.channel_name = channel_name
@@ -133,17 +141,24 @@ class Bot:
         self.ws = None
         self.guard = RateGuard((app.state or {}).get("cmd_blocked"))
         self.owners = {}                     # 서버 번호 → 서버 주인 번호 (제한에서 빠지는 단 한 사람 · None 이면 알아보는 중)
+        self.community = Community(self) if community else None     # #규칙 입장 · 레벨 · 도배 (community.py)
+        self.content_off_until = 0           # 글 내용 받기가 거절된 뒤 다시 시도할 시각 (그 전에는 내용 없이 붙음)
+        self.content_told = False
         self.public = [COMMAND] + ([RETURN_COMMAND] if getattr(app, "start_usd", None) else [])   # #잡담방에서 누구나 (막는 규칙 적용)
-        self.commands = self.public + [NOTE_COMMAND]
+        if self.community:
+            self.public += [LEVEL_COMMAND, RANK_COMMAND]
+        self.commands = self.public + [NOTE_COMMAND] + ([RULES_COMMAND] if self.community else [])
 
     def __repr__(self):                      # 실수로 찍혀도 토큰이 나오지 않게
         return "Bot(channel=%r)" % self.channel_name
 
     # ------------------------------------------------------------------ 디스코드 REST
-    def _rest(self, method, path, body=None, auth=True):
+    def _rest(self, method, path, body=None, auth=True, reason=None):
         headers = {"User-Agent": USER_AGENT, "Content-Type": "application/json"}
         if auth:
             headers["Authorization"] = "Bot " + self._token
+        if reason:                                                   # 서버 감사 로그에 남는 까닭 (한글은 % 꼴로)
+            headers["X-Audit-Log-Reason"] = urllib.parse.quote(reason)
         data = json.dumps(body).encode("utf-8") if body is not None else None
         req = urllib.request.Request(API + path, data=data, method=method, headers=headers)
         where = path.split("/")[1] if "/" in path else path          # 오류 글에 토큰이 섞인 주소를 넣지 않음
@@ -172,13 +187,30 @@ class Bot:
         return await asyncio.to_thread(self._rest, *a, **k)
 
     # ------------------------------------------------------------------ 게이트웨이
+    def intents(self, now_s=None):
+        """커뮤니티 기능을 켰으면 서버 글(+ 거절되지 않았으면 글 내용)을 받음. 끈 봇은 0 (명령만)."""
+        if not self.community:
+            return 0
+        content = (now_s if now_s is not None else time.time()) >= self.content_off_until
+        return GUILD_MESSAGES | (MESSAGE_CONTENT if content else 0)
+
     async def run_forever(self):
         backoff = 2
         while True:
+            asked = self.intents()
             try:
                 await self._session()
                 backoff = 2
             except WSClosed as e:
+                if e.code == 4014 and asked & MESSAGE_CONTENT:     # 포털에서 '글 내용 받기'를 안 켬 → 내용 없이 다시 붙음
+                    self.content_off_until = time.time() + CONTENT_RETRY_S
+                    store.log("글 내용 받기가 거절됨 → 내용 없이 다시 붙음")
+                    if not self.content_told:                      # 6시간마다 다시 시도해도 알림은 한 번만
+                        self.content_told = True
+                        await self.app.d.put("status", "ℹ️ 같은 말 도배 감지는 꺼진 채로 붙음\n디스코드 개발자 포털 → 매매일지봇 → Bot → "
+                                                       "Message Content Intent 를 켜면 6시간 안에 저절로 다시 켜짐 (5초에 5개 도배 · 레벨은 지금도 됨)")
+                    await asyncio.sleep(1)
+                    continue
                 if e.code in FATAL_CLOSE:
                     store.log("봇 멈춤: %s" % FATAL_CLOSE[e.code])
                     await self.app.d.put("status", "⛔ 명령 봇을 멈춤: %s. python -m candleman bot 으로 토큰을 다시 넣기." % FATAL_CLOSE[e.code])
@@ -199,7 +231,7 @@ class Bot:
             interval = hello["d"]["heartbeat_interval"] / 1000.0
             self.acked = True
             beat = asyncio.create_task(self._heartbeat(interval))
-            await self.ws.send_text(json.dumps({"op": 2, "d": {"token": self._token, "intents": 0,
+            await self.ws.send_text(json.dumps({"op": 2, "d": {"token": self._token, "intents": self.intents(),
                                                               "properties": {"os": "android", "browser": "candleman", "device": "candleman"}}}))
             while True:
                 msg = json.loads(await asyncio.wait_for(self.ws.recv(), interval * 3))
@@ -212,6 +244,8 @@ class Bot:
                         await self._on_ready(d)
                     elif t == "INTERACTION_CREATE":
                         asyncio.create_task(self._on_interaction_safe(d))
+                    elif t == "MESSAGE_CREATE" and self.community:
+                        asyncio.create_task(self._on_message_safe(d))
                 elif op == 1:
                     await self._send_beat()
                 elif op == 11:
@@ -244,10 +278,12 @@ class Bot:
         self.app_id = (d.get("application") or {}).get("id")
         done = self.app.state.setdefault("cmd_registered", {})
         sig = json.dumps(self.commands, ensure_ascii=False, sort_keys=True)
+        gids = []
         for g in d.get("guilds", []):
             gid = g.get("id")
             if not gid:
                 continue
+            gids.append(gid)
             await self._load_owner(gid)
             if done.get(gid) == sig:                      # 같은 명령들이 이미 등록돼 있으면 다시 하지 않음 (바뀌면 통째로 다시)
                 continue
@@ -258,6 +294,8 @@ class Bot:
                 store.log("명령 등록: " + " · ".join("/" + c["name"] for c in self.commands))
             except Exception as e:
                 store.log("명령 등록 실패: %s" % e)
+        if self.community and gids:                       # 역할 · 채널을 읽고 꺼져 있던 사이의 글을 셈 (뒤에서)
+            asyncio.create_task(self.community.on_ready(gids))
 
     async def _load_owner(self, gid):
         """서버 주인을 알아 둠. 못 알아내면 다음 명령 때 다시 묻고, 그동안은 주인도 다른 사람과 같은 제한을 받음."""
@@ -278,7 +316,17 @@ class Bot:
         except Exception as e:
             store.log("명령 처리 오류: %s %s" % (type(e).__name__, str(e)[:160]))
 
+    async def _on_message_safe(self, d):
+        try:
+            await self.community.on_message(d)
+        except Exception as e:
+            store.log("글 처리 오류: %s %s" % (type(e).__name__, str(e)[:160]))
+
     async def handle(self, d, now_s):
+        if d.get("type") == 3:                            # 버튼 (#규칙의 입장 버튼)
+            if self.community:
+                await self.community.on_button(d)
+            return
         name = (d.get("data") or {}).get("name")
         if d.get("type") != 2 or name not in [c["name"] for c in self.commands]:
             return
@@ -290,6 +338,8 @@ class Bot:
         gid = d.get("guild_id")
         if name == NOTE_COMMAND["name"]:
             return await self._note(d, iid, tok, uid, gid, now_s)
+        if name == RULES_COMMAND["name"]:
+            return await self._rules(d, iid, tok, uid, gid)
         if (d.get("channel") or {}).get("name") != self.channel_name:
             return await self._reply(iid, tok, "💬 /%s은 #%s에서 쓸 수 있음." % (name, self.channel_name), private=True)
         if gid and gid not in self.owners:                # 시작할 때 못 알아냈으면 뒤에서 다시 (이번 답은 늦추지 않음)
@@ -306,10 +356,18 @@ class Bot:
                 return await self._reply(iid, tok, "⏳ 지금은 /%s을 쓸 수 없음. 나중에 다시 시도 바람." % name, private=True)
         await self.rest("POST", "/interactions/%s/%s/callback" % (iid, tok), {"type": 5}, auth=False)   # '생각 중…' 표시
         try:
-            msg = await (self.app.positions_message() if name == COMMAND["name"] else self.app.return_message())
+            if name == COMMAND["name"]:
+                msg = await self.app.positions_message()
+            elif name == RETURN_COMMAND["name"]:
+                msg = await self.app.return_message()
+            elif name == LEVEL_COMMAND["name"]:
+                msg = self.community.level_message(d)
+            else:
+                msg = self.community.rank_message(d)
         except Exception as e:                            # 바이낸스가 안 받아도 '생각 중…'에 멈춰 있지 않게
             store.log("/%s 답 실패: %s %s" % (name, type(e).__name__, str(e)[:160]))
-            msg = {"content": "⚠️ 지금은 바이낸스에서 값을 받지 못함. 잠시 뒤 다시 시도 바람.", "embeds": []}
+            msg = {"content": "⚠️ 지금은 바이낸스에서 값을 받지 못함. 잠시 뒤 다시 시도 바람." if name in (COMMAND["name"], RETURN_COMMAND["name"])
+                   else "⚠️ 지금은 레벨을 불러오지 못함. 잠시 뒤 다시 시도 바람.", "embeds": []}
         await self.rest("PATCH", "/webhooks/%s/%s/messages/@original" % (self.app_id, tok),
                         {"content": msg["content"][:2000], "embeds": msg.get("embeds", []), "allowed_mentions": {"parse": []}},
                         auth=False)
@@ -328,6 +386,14 @@ class Bot:
         ch = "journal" if has and has("journal") else "status"   # #매매일지 웹후크가 있으면 거기, 없으면 #봇-상태
         await self._reply(iid, tok, text + "\n(이 답은 나만 보임 · #%s에 남김)" % ("매매일지" if ch == "journal" else "봇-상태"), private=True)
         await self.app.d.put(ch, text)
+
+    async def _rules(self, d, iid, tok, uid, gid):
+        """/규칙올리기: 서버 주인만 (커뮤니티 기능이 켜져 있을 때만 등록됨)."""
+        if gid and not self.owners.get(gid):
+            await self._load_owner(gid)
+        if not gid or uid != self.owners.get(gid):
+            return await self._reply(iid, tok, "🔒 /규칙올리기는 운영자만 쓸 수 있음.", private=True)
+        await self.community.post_rules(d, iid, tok)
 
     async def _reply(self, iid, tok, text, private=False):
         data = {"content": text, "allowed_mentions": {"parse": []}}
