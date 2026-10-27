@@ -17,6 +17,10 @@
 안 보이고(default_member_permissions "0"), 어느 채널에서 써도 확인 답은 쓴 사람에게만 보입니다. 남긴 것은 폰의 일지(journal, kind "note")와
 #매매일지(DISCORD_WEBHOOK_JOURNAL — 10/22 댕이: 비공개가 아니어도 되고 글은 운영자만 쓰는 채널 · 없으면 나만 보는 #봇-상태)에 카드 한 장씩 —
 나중에 체결 기록과 맞춰 이유별 · 확신별 성적을 셉니다.
+
+/환영정리(10/28 댕이: 서버 설정에서 입장 환영 메시지를 끈 뒤 이미 올라온 것을 지우려고 · "입장 메시지만")도 서버 주인 한 사람만 씁니다.
+명령을 쓴 채널에서 디스코드가 올린 입장 환영 글(type 7)만 지우고, 사람이 쓴 글 · 손 흔들기 답장 · 고정 알림은 그대로 둡니다.
+🤖 봇 역할의 '메시지 관리 · 메시지 기록 보기'(도배 처리에 주는 권한)로 지웁니다.
 """
 import asyncio
 import json
@@ -28,7 +32,7 @@ import urllib.request
 from collections import deque
 
 from . import fmt, names, store
-from .community import LEVEL_COMMAND, RANK_COMMAND, RULES_COMMAND, Community
+from .community import LEVEL_COMMAND, RANK_COMMAND, RULES_COMMAND, Community, snowflake_ms
 from .spot import split_symbol
 from .tracker import base_of
 from .ws import WebSocket, WSClosed
@@ -57,6 +61,12 @@ NOTE_COMMAND = {
         {"type": 3, "name": "메모", "description": "한 줄 메모", "max_length": 300},
     ],
 }
+JOINS_COMMAND = {"name": "환영정리", "type": 1, "default_member_permissions": "0",          # 서버 주인(관리자)에게만 보임
+                 "description": "운영자 전용 · 이 채널에서 디스코드가 올린 입장 환영 글만 모두 지우기 (사람이 쓴 글은 그대로)"}
+JOIN_TYPE = 7                          # 디스코드가 올리는 '○○ 님이 등장하셨어요' 글 (서버 설정 → 참여의 환영 메시지)
+JOINS_PAGES = 50                       # /환영정리가 읽는 채널 기록 (100개씩, 최근 것부터)
+BULK_AGE_MS = 14 * 86_400_000 - 3_600_000   # 한꺼번에 지우기는 2주 안의 글만 (1시간 여유) — 그보다 오래된 것은 하나씩
+JOINS_WHY = "입장 환영 글 정리 (/환영정리)"
 NOTE_LOOKBACK_MS = 7 * 86_400_000      # 종목을 비우면 이만큼 안의 마지막 주문 · 체결 종목으로
 WINDOW_S, LIMIT, BLOCK_S = 5 * 60, 10, 6 * 3600
 EPHEMERAL = 1 << 6                     # 부른 사람에게만 보이는 답
@@ -149,7 +159,7 @@ class Bot:
         self.public = [COMMAND] + ([RETURN_COMMAND] if getattr(app, "start_usd", None) else [])   # #잡담방에서 누구나 (막는 규칙 적용)
         if self.community:
             self.public += [LEVEL_COMMAND, RANK_COMMAND]
-        self.commands = self.public + [NOTE_COMMAND] + ([RULES_COMMAND] if self.community else [])
+        self.commands = self.public + [NOTE_COMMAND, JOINS_COMMAND] + ([RULES_COMMAND] if self.community else [])
 
     def __repr__(self):                      # 실수로 찍혀도 토큰이 나오지 않게
         return "Bot(channel=%r)" % self.channel_name
@@ -355,6 +365,8 @@ class Bot:
             return await self._note(d, iid, tok, uid, gid, now_s)
         if name == RULES_COMMAND["name"]:
             return await self._rules(d, iid, tok, uid, gid)
+        if name == JOINS_COMMAND["name"]:
+            return await self._clean_joins(d, iid, tok, uid, gid, now_s)
         if (d.get("channel") or {}).get("name") != self.channel_name:
             return await self._reply(iid, tok, "💬 /%s은 #%s에서 쓸 수 있음." % (name, self.channel_name), private=True)
         if gid and gid not in self.owners:                # 시작할 때 못 알아냈으면 뒤에서 다시 (이번 답은 늦추지 않음)
@@ -409,6 +421,67 @@ class Bot:
         if not gid or uid != self.owners.get(gid):
             return await self._reply(iid, tok, "🔒 /규칙올리기는 운영자만 쓸 수 있음.", private=True)
         await self.community.post_rules(d, iid, tok)
+
+    async def _clean_joins(self, d, iid, tok, uid, gid, now_s):
+        """/환영정리: 서버 주인만. 명령을 쓴 채널의 입장 환영 글(type 7)만 지우고, 쓴 사람에게만 보이는 답 + #봇-상태에 한 줄."""
+        if gid and not self.owners.get(gid):
+            await self._load_owner(gid)
+        if not gid or uid != self.owners.get(gid):
+            return await self._reply(iid, tok, "🔒 /환영정리는 운영자만 쓸 수 있음.", private=True)
+        ch = str(d.get("channel_id") or (d.get("channel") or {}).get("id") or "")
+        where = "#" + ((d.get("channel") or {}).get("name") or "이 채널")
+        await self.rest("POST", "/interactions/%s/%s/callback" % (iid, tok), {"type": 5, "data": {"flags": EPHEMERAL}}, auth=False)
+        gone, err = 0, None
+        try:
+            gone, err = await self._delete_ids(ch, await self._join_ids(ch), int(now_s * 1000))
+        except Exception as e:                            # 기록 읽기부터 막힘
+            err = e
+        if err:
+            store.log("/환영정리 실패: %s" % str(err)[:160])
+            text = ("🧹 %s의 입장 환영 글 %d개 지움\n" % (where, gone) if gone else "") + \
+                "⚠️ 다 지우지 못함 — 🤖 봇 역할에 이 채널의 '메시지 관리 · 메시지 기록 보기' 권한이 있어야 함\n(%s)" % err
+        elif gone:
+            text = "🧹 %s의 입장 환영 글 %d개 지움" % (where, gone)
+        else:
+            text = "🧹 %s에 지울 입장 환영 글이 없음" % where
+        await self.rest("PATCH", "/webhooks/%s/%s/messages/@original" % (self.app_id, tok),
+                        {"content": (text + "\n(이 답은 나만 보임)")[:2000], "allowed_mentions": {"parse": []}}, auth=False)
+        if gone:
+            await self.app.d.put("status", "🧹 %s 입장 환영 글 %d개 지움 (/환영정리)" % (where, gone))
+
+    async def _join_ids(self, ch):
+        """채널 기록을 최근 것부터 읽어 입장 환영 글(type 7)의 번호를 모음."""
+        out, before = [], None
+        for _ in range(JOINS_PAGES):
+            page = await self.rest("GET", "/channels/%s/messages?limit=100%s" % (ch, "&before=%s" % before if before else ""))
+            if not page:
+                break
+            out += [str(m["id"]) for m in page if m.get("type") == JOIN_TYPE]
+            before = page[-1]["id"]
+            if len(page) < 100:
+                break
+        return out
+
+    async def _delete_ids(self, ch, ids, now_ms):
+        """2주 안의 글은 100개씩 한꺼번에(하나뿐이면 그냥), 그보다 오래된 글은 하나씩 지움. 돌려줌: (지운 수, 첫 오류 또는 None)."""
+        fresh = [i for i in ids if snowflake_ms(i) > now_ms - BULK_AGE_MS]
+        keep = set(fresh)
+        gone = 0
+        try:
+            for k in range(0, len(fresh), 100):
+                chunk = fresh[k:k + 100]
+                if len(chunk) == 1:
+                    await self.rest("DELETE", "/channels/%s/messages/%s" % (ch, chunk[0]), reason=JOINS_WHY)
+                else:
+                    await self.rest("POST", "/channels/%s/messages/bulk-delete" % ch, {"messages": chunk}, reason=JOINS_WHY)
+                gone += len(chunk)
+            for i in ids:
+                if i not in keep:
+                    await self.rest("DELETE", "/channels/%s/messages/%s" % (ch, i), reason=JOINS_WHY)
+                    gone += 1
+        except Exception as e:
+            return gone, e
+        return gone, None
 
     async def _reply(self, iid, tok, text, private=False):
         data = {"content": text, "allowed_mentions": {"parse": []}}

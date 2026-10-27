@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from candleman import store  # noqa: E402
-from candleman.bot import BLOCK_S, COMMAND, NOTE_COMMAND, RETURN_COMMAND, Bot, RateGuard  # noqa: E402
+from candleman.bot import BLOCK_S, COMMAND, JOINS_COMMAND, NOTE_COMMAND, RETURN_COMMAND, Bot, RateGuard  # noqa: E402
 
 
 class RateGuardTest(unittest.TestCase):
@@ -144,7 +144,7 @@ class BotTest(BotCase):
         self.calls.clear()
         asyncio.run(self.bot._on_ready(ready))
         self.assertEqual([(m, p, a) for m, p, _, a in self.calls], [("GET", "/guilds/g1", True), ("PUT", "/applications/app2/guilds/g1/commands", True)])
-        self.assertEqual(self.calls[1][2], [COMMAND, NOTE_COMMAND])
+        self.assertEqual(self.calls[1][2], [COMMAND, NOTE_COMMAND, JOINS_COMMAND])
         self.assertNotIn("contexts", COMMAND)                            # 서버 전용 명령에는 안 붙임
         self.assertEqual(self.bot.owners, {"g1": OWNER})
         self.calls.clear()
@@ -178,7 +178,7 @@ class ReturnCommandTest(BotCase):
         self.calls.clear()
         asyncio.run(self.bot._on_ready({"application": {"id": "app1"}, "guilds": [{"id": "g1"}]}))
         puts = [b for m, _, b, _ in self.calls if m == "PUT"]
-        self.assertEqual(puts, [[COMMAND, RETURN_COMMAND, NOTE_COMMAND]])    # 옛 등록(/포지션만)과 달라서 다시 등록
+        self.assertEqual(puts, [[COMMAND, RETURN_COMMAND, NOTE_COMMAND, JOINS_COMMAND]])    # 옛 등록(/포지션만)과 달라서 다시 등록
         self.assertTrue(all(len(c["description"]) <= 100 for c in puts[0]))
 
     def test_answers_with_return_text(self):
@@ -273,6 +273,96 @@ class NoteCommandTest(BotCase):
         for i in range(15):                                                  # 주인은 막는 규칙과 상관없음
             self.run_one(note(10 + i, 이유="차트"), now=1000.0 + i)
         self.assertEqual(len(self.notes()), 16)
+
+
+def joins(i, uid=OWNER, channel="잡담방", cid="c1"):
+    return {"type": 2, "id": "w%d" % i, "token": "wt%d" % i, "channel_id": cid, "channel": {"id": cid, "name": channel}, "guild_id": "g1",
+            "data": {"name": "환영정리"}, "member": {"permissions": "0", "nick": "댕이", "user": {"id": uid, "username": "richdaeng"}}}
+
+
+def sid(ms, n=0):
+    """그 시각(ms)에 만든 디스코드 번호."""
+    return str(((ms - 1_420_070_400_000) << 22) + n)
+
+
+NOW_MS = 1_793_150_000_000                                                 # 2026-10-28 낮
+WHY = "입장 환영 글 정리 (/환영정리)"
+
+
+class JoinsCommandTest(BotCase):
+    """/환영정리 — 서버 주인만, 명령을 쓴 채널에서 디스코드가 올린 입장 글(type 7)만 지움 · 2주 넘은 글은 하나씩."""
+
+    def setUp(self):
+        super().setUp()
+        self.pages, self.fail = [], set()                                   # GET 이 차례로 돌려줄 기록 · 실패시킬 주소 끝
+
+        async def fake_rest(method, path, body=None, auth=True, reason=None):
+            self.calls.append((method, path, body, auth, reason))
+            await asyncio.sleep(0)
+            if (method, path) == ("GET", "/guilds/g1"):
+                return {"owner_id": OWNER}
+            if any(path.endswith(s) for s in self.fail):
+                raise RuntimeError("디스코드 %s channels 실패: HTTP 403" % method)
+            if method == "GET":
+                return self.pages.pop(0) if self.pages else []
+            return {}
+        self.bot.rest = fake_rest
+
+    def page(self, start_ms, n, kinds):
+        """디스코드처럼 최근 것부터 n개 — k번째 글의 type 은 kinds 를 돌려 가며."""
+        return [{"id": sid(start_ms - k * 60_000, k), "type": kinds[k % len(kinds)]} for k in range(n)]
+
+    def test_hidden_owner_command(self):
+        self.assertEqual(JOINS_COMMAND["default_member_permissions"], "0")  # 다른 사람에게는 명령 목록에도 안 보임
+        self.assertLessEqual(len(JOINS_COMMAND["description"]), 100)
+        self.assertIn(JOINS_COMMAND, self.bot.commands)
+
+    def test_deletes_only_join_messages_across_pages(self):
+        p1 = self.page(NOW_MS, 100, [7, 0, 19, 7, 6])                       # 입장 · 사람 글 · 손 흔들기 답장 · 입장 · 고정 알림
+        p2 = self.page(NOW_MS - 100 * 60_000, 31, [7, 0])
+        p2[-1] = old = {"id": sid(NOW_MS - 15 * 86_400_000), "type": 7}      # 2주 넘은 입장 글은 한꺼번에 못 지움
+        self.pages = [p1, p2]
+        calls = self.run_one(joins(1), now=NOW_MS / 1000)
+        want = [m["id"] for m in p1 + p2 if m["type"] == 7]
+        self.assertEqual(calls[0][:4], ("POST", "/interactions/w1/wt1/callback", {"type": 5, "data": {"flags": 64}}, False))   # 나만 보는 '생각 중…'
+        self.assertEqual([p for m, p, *_ in calls if m == "GET"],
+                         ["/channels/c1/messages?limit=100", "/channels/c1/messages?limit=100&before=%s" % p1[-1]["id"]])
+        bulk = [b["messages"] for m, p, b, *_ in calls if p.endswith("/bulk-delete")]
+        dels = [p for m, p, *_ in calls if m == "DELETE"]
+        self.assertEqual(sum(bulk, []) + [p.rsplit("/", 1)[1] for p in dels], want)   # 입장 글만 · 빠짐없이 · 한 번씩
+        self.assertTrue(all(2 <= len(b) <= 100 for b in bulk))
+        self.assertEqual(dels, ["/channels/c1/messages/%s" % old["id"]])     # 오래된 것은 하나씩
+        self.assertEqual({r for m, p, _, _, r in calls if m == "DELETE" or p.endswith("/bulk-delete")}, {WHY})   # 감사 로그 까닭
+        self.assertEqual(calls[-1][:2], ("PATCH", "/webhooks/app1/wt1/messages/@original"))
+        self.assertEqual(calls[-1][2]["content"], "🧹 #잡담방의 입장 환영 글 %d개 지움\n(이 답은 나만 보임)" % len(want))
+        self.assertEqual(self.app.d.sent, [("status", "🧹 #잡담방 입장 환영 글 %d개 지움 (/환영정리)" % len(want))])
+
+    def test_single_join_deleted_alone_and_empty_channel(self):
+        self.pages = [[{"id": sid(NOW_MS), "type": 7}, {"id": sid(NOW_MS - 60_000), "type": 0}]]
+        calls = self.run_one(joins(2), now=NOW_MS / 1000)
+        self.assertEqual([(m, p) for m, p, *_ in calls if m == "DELETE" or p.endswith("/bulk-delete")],
+                         [("DELETE", "/channels/c1/messages/%s" % sid(NOW_MS))])   # 한꺼번에 지우기는 2개부터라 하나는 그냥
+        self.pages = [[{"id": sid(NOW_MS - 60_000), "type": 0}]]
+        calls = self.run_one(joins(3), now=NOW_MS / 1000)
+        self.assertEqual(calls[-1][2]["content"], "🧹 #잡담방에 지울 입장 환영 글이 없음\n(이 답은 나만 보임)")
+        self.assertEqual(len(self.app.d.sent), 1)                            # 지운 게 없으면 #봇-상태에 안 남김
+
+    def test_others_refused_and_nothing_read(self):
+        calls = self.run_one(joins(4, uid="42"))
+        self.assertEqual(calls[0][2]["data"], {"content": "🔒 /환영정리는 운영자만 쓸 수 있음.", "allowed_mentions": {"parse": []}, "flags": 64})
+        self.assertEqual([m for m, *_ in calls], ["POST"])
+        self.assertEqual(self.app.d.sent, [])
+
+    def test_missing_permission_reported(self):
+        perm = "⚠️ 다 지우지 못함 — 🤖 봇 역할에 이 채널의 '메시지 관리 · 메시지 기록 보기' 권한이 있어야 함"
+        self.fail = {"limit=100"}                                           # 기록 읽기부터 막힘
+        self.assertEqual(self.run_one(joins(5), now=NOW_MS / 1000)[-1][2]["content"].split("\n")[0], perm)
+        old = sid(NOW_MS - 20 * 86_400_000)
+        self.pages = [[{"id": sid(NOW_MS), "type": 7}, {"id": sid(NOW_MS - 60_000, 1), "type": 7}, {"id": old, "type": 7}]]
+        self.fail = {old}                                                   # 한꺼번에는 지웠고 오래된 하나에서 막힘
+        calls = self.run_one(joins(6), now=NOW_MS / 1000)
+        self.assertEqual(calls[-1][2]["content"].split("\n")[:2], ["🧹 #잡담방의 입장 환영 글 2개 지움", perm])
+        self.assertEqual(self.app.d.sent, [("status", "🧹 #잡담방 입장 환영 글 2개 지움 (/환영정리)")])
 
 
 EWY = {"symbol": "EWYUSDT", "positionAmt": "20", "entryPrice": "152.83045678", "markPrice": "155.00000000",
