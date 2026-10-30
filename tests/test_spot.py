@@ -311,6 +311,53 @@ class FeedTest(unittest.TestCase):
         self.assertTrue(sent[0][1].startswith("⬜ 비트코인(BTC) 현물 모두 매도"))
         self.assertIsNotNone(self.app._ret_due)                                    # 잠시 뒤 #실시간-매매에 주인장 수익률
 
+    def run_worker(self, fills, introduce):
+        """체결들을 일꾼에게 넣고 일지에 다 남을 때까지 기다림 (소개는 일지에 남긴 바로 뒤). 돌려줌: 일지 기록."""
+        sent = []
+
+        class D2:
+            async def put(self, ch, text, embeds=None):
+                sent.append((ch, text))
+        self.app.d, self.app._pos_cache, self.app._pos_due, self.app._introduce = D2(), None, None, introduce
+        import candleman.spotfeed as sf
+        old, sf.SETTLE_S = sf.SETTLE_S, 0
+
+        def recs():
+            return [r for r in store.read_journal(0, 10 ** 15) if r.get("kind") == "spot_fill"]
+
+        async def go():
+            task = asyncio.ensure_future(self.feed._fill_worker())
+            for f in fills:
+                await self.feed.fills.put(f)
+            for _ in range(500):
+                await asyncio.sleep(0.01)
+                if len(recs()) == len(fills):
+                    break
+            await asyncio.sleep(0.01)
+            task.cancel()
+        try:
+            asyncio.run(go())
+        finally:
+            sf.SETTLE_S = old
+        return recs()
+
+    def test_fill_worker_introduces_only_bought_coins(self):
+        told = []
+
+        async def introduce(symbol, t_ms=None, coin=False):
+            told.append((symbol, t_ms, coin))
+        bought, sold, dollars = fill("BUY", "1", "0.05", symbol="ETHBTC"), fill("SELL", "1", "0.05", symbol="ETHBTC"), fill("BUY", "100", "100", symbol="USDCUSDT")
+        bought.t_ms = 1234
+        self.assertEqual(len(self.run_worker([sold, dollars, bought], introduce)), 3)
+        self.assertEqual(told, [("ETH", 1234, True)])                              # 판 것 · 달러를 산 것은 소개 안 함 · 짝이 BTC 여도 코인 기호로
+
+    def test_failed_introduction_keeps_fill_record(self):
+        async def introduce(symbol, t_ms=None, coin=False):
+            raise RuntimeError("디스코드 안 됨")
+        rec, = self.run_worker([fill("BUY", "1", "0.05", symbol="ETHBTC")], introduce)
+        self.assertEqual(rec["symbol"], "ETHBTC")
+        self.assertIsNotNone(self.app._pos_due)                                    # #현재포지션 새 글도 그대로
+
 
 class SpotCardsTest(unittest.TestCase):
     def test_spot_cards_after_futures_cards(self):

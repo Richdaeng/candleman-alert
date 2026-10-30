@@ -42,7 +42,7 @@ def load(path=ENV_PATH):
     hooks = {"trade": e["DISCORD_WEBHOOK_TRADE"]}
     hooks["summary"] = e.get("DISCORD_WEBHOOK_SUMMARY") or hooks["trade"]
     hooks["status"] = e.get("DISCORD_WEBHOOK_STATUS") or hooks["summary"]
-    if e.get("DISCORD_WEBHOOK_SYMBOLS"):               # 있으면 처음 진입한 종목을 #종목설명에 소개
+    if e.get("DISCORD_WEBHOOK_SYMBOLS"):               # 있으면 처음 거래한 종목을 #종목설명에 소개
         hooks["symbols"] = e["DISCORD_WEBHOOK_SYMBOLS"]
     if e.get("DISCORD_WEBHOOK_POSITIONS"):             # 있으면 포지션이 바뀔 때마다 #현재포지션에 지금 포지션 카드
         hooks["positions"] = e["DISCORD_WEBHOOK_POSITIONS"]

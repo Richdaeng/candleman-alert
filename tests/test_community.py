@@ -445,7 +445,7 @@ class BotWiringTest(unittest.TestCase):
         store.DATA_DIR, store.STATE, store.JOURNAL, store.LOG = self.old
 
     def test_commands_and_intents(self):
-        self.assertEqual([c["name"] for c in self.bot.commands], ["포지션", "레벨", "순위", "일지", "환영정리", "규칙올리기"])
+        self.assertEqual([c["name"] for c in self.bot.commands], ["포지션", "레벨", "순위", "일지", "환영정리", "종목소개", "규칙올리기"])
         self.assertTrue(all(len(c["description"]) <= 100 for c in self.bot.commands))
         self.assertEqual(self.bot.commands[-1]["default_member_permissions"], "0")   # /규칙올리기는 운영자에게만 보임
         self.assertEqual(self.bot.intents(), GUILD_MESSAGES | MESSAGE_CONTENT)
@@ -453,7 +453,7 @@ class BotWiringTest(unittest.TestCase):
         self.assertEqual(self.bot.intents(now_s=1_900_000_000), GUILD_MESSAGES)
         self.assertEqual(self.bot.intents(now_s=2_000_000_001), GUILD_MESSAGES | MESSAGE_CONTENT)   # 6시간 뒤 다시 시도
         plain = Bot("x.y.z", FakeApp())
-        self.assertEqual((plain.intents(), [c["name"] for c in plain.commands]), (0, [COMMAND["name"], NOTE_COMMAND["name"], "환영정리"]))
+        self.assertEqual((plain.intents(), [c["name"] for c in plain.commands]), (0, [COMMAND["name"], NOTE_COMMAND["name"], "환영정리", "종목소개"]))
 
     def test_content_refused_reconnects_without_it(self):
         seen = []

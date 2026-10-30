@@ -154,7 +154,7 @@ class FakeKind:
 
 
 class IntroTest(unittest.TestCase):
-    """처음 진입한 종목을 #종목설명에 한 번만 소개하는지."""
+    """처음 거래한 종목을 #종목설명에 한 번만 소개하는지."""
 
     def setUp(self):
         from candleman import store
@@ -203,6 +203,22 @@ class IntroTest(unittest.TestCase):
         asyncio.run(app._introduce("KORUUSDT"))
         self.assertEqual(app.d.sent, [])
         self.assertNotIn("KORU", app.state.get("introduced", []))   # 나중에 웹후크를 넣으면 그때 소개
+
+    def test_spot_coin_without_description(self):
+        app = self.make(kind="EQUITY")
+        self.assertTrue(asyncio.run(app._introduce("FOO", ms(2026, 10, 31, 10), coin=True)))
+        card = self.cards(app)[0]
+        self.assertEqual((card["title"], card["description"]), ("🆕 FOO", "코인. 자세한 설명은 곧 추가함."))
+        self.assertTrue(card["timestamp"].startswith("2026-10-31T01:00"))
+        self.assertEqual(app.b.asked, [])                      # 선물 분류는 묻지 않음
+        self.assertEqual([s[0] for s in app.d.sent], ["symbols", "status"])
+
+    def test_spot_and_futures_share_one_card(self):
+        app = self.make()
+        self.assertTrue(asyncio.run(app._introduce("KORU", coin=True)))
+        self.assertFalse(asyncio.run(app._introduce("KORUUSDT")))
+        self.assertFalse(asyncio.run(app._introduce("BTC", coin=True)))   # 공지에 처음부터 있던 종목
+        self.assertEqual(len(self.cards(app)), 1)
 
 
 class AnnounceTest(unittest.TestCase):

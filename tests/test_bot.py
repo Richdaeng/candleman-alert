@@ -7,7 +7,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from candleman import store  # noqa: E402
-from candleman.bot import BLOCK_S, COMMAND, JOINS_COMMAND, NOTE_COMMAND, RETURN_COMMAND, Bot, RateGuard  # noqa: E402
+from candleman.app import App  # noqa: E402
+from candleman.bot import BLOCK_S, COMMAND, INTRO_COMMAND, JOINS_COMMAND, NOTE_COMMAND, RETURN_COMMAND, Bot, RateGuard  # noqa: E402
 
 
 class RateGuardTest(unittest.TestCase):
@@ -144,7 +145,7 @@ class BotTest(BotCase):
         self.calls.clear()
         asyncio.run(self.bot._on_ready(ready))
         self.assertEqual([(m, p, a) for m, p, _, a in self.calls], [("GET", "/guilds/g1", True), ("PUT", "/applications/app2/guilds/g1/commands", True)])
-        self.assertEqual(self.calls[1][2], [COMMAND, NOTE_COMMAND, JOINS_COMMAND])
+        self.assertEqual(self.calls[1][2], [COMMAND, NOTE_COMMAND, JOINS_COMMAND, INTRO_COMMAND])
         self.assertNotIn("contexts", COMMAND)                            # 서버 전용 명령에는 안 붙임
         self.assertEqual(self.bot.owners, {"g1": OWNER})
         self.calls.clear()
@@ -178,7 +179,7 @@ class ReturnCommandTest(BotCase):
         self.calls.clear()
         asyncio.run(self.bot._on_ready({"application": {"id": "app1"}, "guilds": [{"id": "g1"}]}))
         puts = [b for m, _, b, _ in self.calls if m == "PUT"]
-        self.assertEqual(puts, [[COMMAND, RETURN_COMMAND, NOTE_COMMAND, JOINS_COMMAND]])    # 옛 등록(/포지션만)과 달라서 다시 등록
+        self.assertEqual(puts, [[COMMAND, RETURN_COMMAND, NOTE_COMMAND, JOINS_COMMAND, INTRO_COMMAND]])    # 옛 등록(/포지션만)과 달라서 다시 등록
         self.assertTrue(all(len(c["description"]) <= 100 for c in puts[0]))
 
     def test_answers_with_return_text(self):
@@ -363,6 +364,87 @@ class JoinsCommandTest(BotCase):
         calls = self.run_one(joins(6), now=NOW_MS / 1000)
         self.assertEqual(calls[-1][2]["content"].split("\n")[:2], ["🧹 #잡담방의 입장 환영 글 2개 지움", perm])
         self.assertEqual(self.app.d.sent, [("status", "🧹 #잡담방 입장 환영 글 2개 지움 (/환영정리)")])
+
+
+def intro(i, sym, uid=OWNER):
+    return {"type": 2, "id": "c%d" % i, "token": "ct%d" % i, "channel": {"name": "공지사항"}, "guild_id": "g1",
+            "data": {"name": "종목소개", "options": [{"name": "종목", "type": 3, "value": sym}]},
+            "member": {"permissions": "0", "nick": "댕이", "user": {"id": uid, "username": "richdaeng"}}}
+
+
+class IntroDiscord:
+    def __init__(self):
+        self.sent, self.hooks = [], {"symbols"}
+
+    def has(self, ch):
+        return ch in self.hooks
+
+    async def put(self, ch, text, embeds=None):
+        self.sent.append((ch, embeds[0]["title"] if embeds else text))
+
+
+class IntroApp(FakeApp):
+    _introduce = App._introduce                                            # 소개는 진짜 코드로
+
+    def __init__(self):
+        super().__init__()
+        self.d, self.b = IntroDiscord(), self
+        self.kind_of = {"FOOUSDT": "COIN"}
+
+    async def symbol_kind(self, symbol):
+        return self.kind_of.get(symbol)
+
+
+class IntroCommandTest(BotCase):
+    """/종목소개 — 서버 주인만, 아직 소개하지 않은 종목의 카드를 #종목설명에 한 번 올림 · 답은 쓴 사람에게만."""
+    App = IntroApp
+
+    def answer(self, calls):
+        return calls[-1][2].get("content") or calls[-1][2]["data"]["content"]
+
+    def test_hidden_owner_command(self):
+        self.assertEqual(INTRO_COMMAND["default_member_permissions"], "0")  # 다른 사람에게는 명령 목록에도 안 보임
+        self.assertLessEqual(len(INTRO_COMMAND["description"]), 100)
+        self.assertIn(INTRO_COMMAND, self.bot.commands)
+
+    def test_owner_posts_card_once_in_any_channel(self):
+        calls = self.run_one(intro(1, " koruusdt "))
+        self.assertEqual(calls[0][:4], ("POST", "/interactions/c1/ct1/callback", {"type": 5, "data": {"flags": 64}}, False))   # 나만 보는 '생각 중…'
+        self.assertEqual(calls[1][:2], ("PATCH", "/webhooks/app1/ct1/messages/@original"))
+        self.assertEqual(self.app.d.sent, [("symbols", "🆕 KORU · 한국 주식 3배 ETF")])
+        self.assertEqual(self.answer(calls), "🆕 한국 주식 3배 ETF(KORU) 소개 카드를 #종목설명에 올림\n(이 답은 나만 보임)")
+        self.assertIn("KORU", self.app.state["introduced"])                 # 다음 거래 때 또 올라가지 않음
+        calls = self.run_one(intro(2, "KORU"))
+        self.assertEqual(self.answer(calls), "ℹ️ 이미 소개한 종목이라 다시 올리지 않음: 한국 주식 3배 ETF(KORU)\n(이 답은 나만 보임)")
+        self.assertEqual(len(self.app.d.sent), 1)
+        self.run_one(intro(3, "BTC"))                                       # 공지에 처음부터 있던 종목
+        self.assertEqual(len(self.app.d.sent), 1)
+
+    def test_unknown_symbol_gets_basic_card_and_note(self):
+        self.run_one(intro(1, "FOO"))
+        self.assertEqual([s[0] for s in self.app.d.sent], ["symbols", "status"])
+
+    def test_others_are_refused(self):
+        calls = self.run_one(intro(1, "KORU", uid="42"))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][2]["data"]["flags"], 64)
+        self.assertEqual(calls[0][2]["data"]["content"], "🔒 /종목소개는 운영자만 쓸 수 있음.")
+        self.assertEqual(self.app.d.sent, [])
+        self.assertNotIn("introduced", self.app.state)
+
+    def test_without_hook_says_how_and_keeps_it_for_later(self):
+        self.app.d.hooks = set()
+        calls = self.run_one(intro(1, "KORU"))
+        self.assertEqual(len(calls), 1)
+        self.assertIn("python -m candleman hook symbols", calls[0][2]["data"]["content"])
+        self.assertEqual(self.app.d.sent, [])
+        self.assertNotIn("introduced", self.app.state)
+
+    def test_blank_or_dollar_is_not_a_symbol(self):
+        for i, sym in enumerate(("   ", "usdt", "USDC")):
+            calls = self.run_one(intro(i, sym))
+            self.assertIn("종목 기호", calls[0][2]["data"]["content"])
+        self.assertEqual(self.app.d.sent, [])
 
 
 EWY = {"symbol": "EWYUSDT", "positionAmt": "20", "entryPrice": "152.83045678", "markPrice": "155.00000000",

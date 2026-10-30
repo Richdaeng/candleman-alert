@@ -647,20 +647,23 @@ class App:
             store.save_state(self.state)
             store.log("안내 글 올림: %s" % a["id"])
 
-    async def _introduce(self, symbol, t_ms=None):
-        """처음 진입한 종목이면 #종목설명에 소개 카드를 올림 (DISCORD_WEBHOOK_SYMBOLS 가 있을 때만, 종목마다 한 번)."""
-        base = base_of(symbol)
+    async def _introduce(self, symbol, t_ms=None, coin=False):
+        """처음 거래한 종목이면 #종목설명에 소개 카드를 올림 (DISCORD_WEBHOOK_SYMBOLS 가 있을 때만, 종목마다 한 번). 올렸으면 True.
+        coin=True 는 현물: symbol 이 코인 기호 그대로이고(ETHBTC 같은 짝이 있어서 선물 기호로 못 만듦) 선물 분류를 묻지 않음."""
+        base = symbol if coin else base_of(symbol)
         done = self.state.setdefault("introduced", list(names.ALREADY_INTRODUCED))
         if not base or base in done or not self.d.has("symbols"):
-            return
+            return False
         done.append(base)
         store.save_state(self.state)
         known = base in names.DESCRIPTIONS
-        card = names.intro_card(base, None if known else await self.b.symbol_kind(symbol))
+        kind = None if known else "COIN" if coin else await self.b.symbol_kind(symbol)
+        card = names.intro_card(base, kind)
         card["timestamp"] = datetime.fromtimestamp((t_ms or now_ms()) / 1000, timezone.utc).isoformat()
         await self.d.put("symbols", "", [card])
         if not known:
             await self.d.put("status", "📝 설명이 없는 새 종목 %s — #종목설명에 기본 문구로 올림. 설명 추가 필요." % base)
+        return True
 
     def _add_gap(self, a, b):
         gaps = [g for g in self.state.get("gaps", []) if g[1] > now_ms() - 8 * 86400 * 1000]

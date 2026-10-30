@@ -118,7 +118,7 @@ class SpotFeed:
         return self.t.tick(n)
 
     async def _fill_worker(self):
-        """체결 글을 차례대로: 팔 때는 거래 기록으로 손익을 계산해 붙임."""
+        """체결 글을 차례대로: 팔 때는 거래 기록으로 손익을 계산해 붙이고, 처음 산 코인은 #종목설명에 소개."""
         while True:
             f = await self.fills.get()
             try:
@@ -144,6 +144,8 @@ class SpotFeed:
                                "fee_usd": None if fee is None else str(fee)}])         # 하루 요약이 이 기록으로 현물을 셈
                 self.app._pos_cache = self.app._ret_cache = None   # /포지션 · /주인장수익률도 새 값으로
                 self.app._pos_due, self.app._pos_why = now_ms() + 3000, "fill"   # #현재포지션 새 글
+                if f.side == "BUY" and f.base not in CASH:         # 맨 끝: 소개가 막혀도 위 기록은 빠지지 않게
+                    await self.app._introduce(f.base, f.t_ms, coin=True)
             except Exception as e:
                 store.log("현물 체결 글 오류: %s %s" % (type(e).__name__, str(e)[:160]))
 
