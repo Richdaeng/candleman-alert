@@ -44,6 +44,7 @@ from .ws import WebSocket, WSClosed
 GATEWAY = "wss://gateway.discord.gg/?v=10&encoding=json"
 API = "https://discord.com/api/v10"
 USER_AGENT = "DiscordBot (https://github.com/Richdaeng/candleman-alert, 1.0)"
+SILENT = 1 << 12                     # 폰 알림 없이 보내는 글 (SUPPRESS_NOTIFICATIONS)
 COMMAND = {"name": "포지션", "description": "운영자가 지금 들고 있는 포지션 보기", "type": 1}   # 서버 전용 명령이라 contexts 는 안 씀
 RETURN_COMMAND = {"name": "주인장수익률", "description": "운영자가 시작한 금액 대비 지금 자산과 수익률 보기", "type": 1}
 NOTE_REASONS = ("거시 경제", "뉴스 · 일정", "차트", "직감", "기타")
@@ -145,6 +146,22 @@ def whoami(token):
     b._token = token
     j = b._rest("GET", "/users/@me")
     return j.get("global_name") or j.get("username") or "?"
+
+
+def dm_owner(token, msg):
+    """글을 서버 주인 한 사람에게만 개인 메시지로 보냄(시그널 · 11/1 댕이 "나에게만"). 웹후크가 필요 없음.
+    ring 인 글만 폰 알림이 가고 나머지는 조용히 쌓임. 공개 봇이 아니라서 봇이 든 서버의 주인이 곧 운영자 —
+    주인이 둘 이상이 되면 엉뚱한 사람에게 가지 않게 보내지 않음."""
+    b = Bot.__new__(Bot)
+    b._token = token
+    owners = {b._rest("GET", "/guilds/%s" % g["id"]).get("owner_id") for g in b._rest("GET", "/users/@me/guilds")}
+    if len(owners) != 1 or None in owners:
+        raise RuntimeError("시그널 받을 사람을 못 정함: 서버 주인 %d명" % len(owners))
+    room = b._rest("POST", "/users/@me/channels", {"recipient_id": owners.pop()})
+    body = {"content": msg["content"], "embeds": msg["embeds"], "allowed_mentions": {"parse": []}}
+    if not msg.get("ring"):
+        body["flags"] = SILENT
+    return b._rest("POST", "/channels/%s/messages" % room["id"], body)
 
 
 class Bot:

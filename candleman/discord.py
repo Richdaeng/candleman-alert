@@ -2,12 +2,12 @@
 
 웹후크 주소는 기록에 남기지 않습니다(채널 이름만 남김). @everyone 같은 호출이 글에 섞여도 울리지 않게 막아 둡니다.
 글쓴이 이름 · 사진은 보내지 않고 디스코드의 웹후크 설정을 그대로 씁니다(지금은 '매매일지봇' · 캔들 사진, 디스코드에서 바꾸면 바로 반영).
-#봇-시그널만 글마다 사진을 함께 보냅니다(저장소의 assets/signalbot.png · 이름은 웹후크 설정 그대로).
+#봇-시그널 기록만 글마다 사진을 함께 보냅니다(저장소의 assets/signalbot.png · 이름은 웹후크 설정 그대로).
 
 알림 채널(ping — 기본 #실시간-매매 · #현재포지션 · #일일-요약 · #일일-경제-브리핑)의 글은 머리 줄 끝에 @everyone 을 붙여 모두에게 울립니다
 (10/26 댕이: 서버 기본 알림을 '@mentions만'으로 바꾸고 매매 · 포지션 알림만 울리게). 폰 알림에 내용이 먼저 보이게 끝에 붙이고,
 글 속에 원래 섞인 @everyone · @here 는 그대로 끊어 둡니다(우리가 붙인 하나만 울림).
-#봇-시그널은 채널 전체가 아니라 글마다 정합니다(put 의 ring · 자리가 바뀐 글만 울림).
+#봇-시그널은 절대 울리지 않습니다. 신호 알림은 운영자 한 사람에게만 가는 봇 DM 입니다(11/1 댕이 · bot.dm_owner).
 """
 import asyncio
 import json
@@ -19,8 +19,7 @@ from . import cards
 
 USER_AGENT = "DiscordBot (https://github.com/Richdaeng/candleman-alert, 1.0)"
 PING = "@everyone"
-RING_BY_POST = ("signal",)         # 글마다 울릴지 정하는 채널
-AVATAR = {"signal": "https://raw.githubusercontent.com/Richdaeng/candleman-alert/stable/assets/signalbot.png"}
+AVATAR ={"signal": "https://raw.githubusercontent.com/Richdaeng/candleman-alert/stable/assets/signalbot.png"}
 
 
 def with_ping(text):
@@ -58,7 +57,7 @@ class Discord:
 
     def _post(self, channel, text, embeds=None):
         url = self.urls.get(channel) or self.urls.get("trade")
-        payload = {"allowed_mentions": {"parse": ["everyone"] if channel in self.ping or channel in RING_BY_POST else []}}
+        payload = {"allowed_mentions": {"parse": ["everyone"] if channel in self.ping else []}}
         if channel in AVATAR:
             payload["avatar_url"] = AVATAR[channel]
         if text:
@@ -91,10 +90,10 @@ class Discord:
     def send_now(self, channel, text):
         return self._post(channel, text)
 
-    async def put(self, channel, text, embeds=None, ring=None):
+    async def put(self, channel, text, embeds=None):
         if embeds is None:                           # #실시간-매매 · #봇-상태 줄글은 머리 한 줄 + 카드로 (cards.py)
             text, embeds = cards.card(channel, text)
-        if channel in self.ping if ring is None else ring:   # 알림 채널은 머리 줄 끝에 @everyone (ring 을 주면 그 글만 그대로)
+        if channel in self.ping:                     # 알림 채널은 머리 줄 끝에 @everyone
             text = with_ping(text)
         await self.q.put((channel, text, embeds))
 

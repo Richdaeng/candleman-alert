@@ -6,7 +6,7 @@
   python -m candleman summary  지난 요약 구간의 요약을 지금 #일일-요약에 보냄
   python -m candleman hook symbols   웹후크 주소 하나만 넣거나 바꿈 (symbols = #종목설명 · positions = #현재포지션 · briefing = #일일-경제-브리핑 · journal = #매매일지 · signal = #봇-시그널 · trade · summary · status)
   python -m candleman briefing  오늘 아침 경제 브리핑을 지금 #일일-경제-브리핑에 올려 봄 (클라우드 글이 없으면 숫자만)
-  python -m candleman signal   지금 판정을 #봇-시그널에 올려 봄 (signal btc · signal ipo · signal ipo 2026-10-30, 기록은 안 건드림)
+  python -m candleman signal   지금 판정을 나에게만(봇 DM) 보내 봄 (signal btc · signal ipo · signal ipo 2026-10-30, 기록은 안 건드림)
   python -m candleman bot      /포지션 명령 봇의 토큰을 넣거나 바꿈 (화면에 안 보이게)
   python -m candleman update   GitHub 의 stable 판을 받아 시험해 보고 바꿈 (다시 켜기는 termux/update.sh 가 함)
 """
@@ -116,7 +116,7 @@ def _setup():
     vals["DISCORD_WEBHOOK_POSITIONS"] = input("#현재포지션 웹후크 주소 (없으면 그냥 Enter — 현재 포지션 글을 안 씀): ").strip()
     vals["DISCORD_WEBHOOK_BRIEFING"] = input("#일일-경제-브리핑 웹후크 주소 (없으면 그냥 Enter — 아침 브리핑을 안 씀): ").strip()
     vals["DISCORD_WEBHOOK_JOURNAL"] = input("#매매일지 웹후크 주소 (없으면 그냥 Enter — /일지는 #봇-상태에 남김): ").strip()
-    vals["DISCORD_WEBHOOK_SIGNAL"] = input("#봇-시그널 웹후크 주소 (없으면 그냥 Enter — 신호 글을 안 씀): ").strip()
+    vals["DISCORD_WEBHOOK_SIGNAL"] = input("#봇-시그널 웹후크 주소 (없으면 그냥 Enter — 신호는 봇 DM으로만 감): ").strip()
     hour = input("요약 시각 (0~23, 그냥 Enter 면 22): ").strip() or "22"
     vals["SUMMARY_HOUR"] = hour
     lines = ["# 캔들맨 알림 설정 — 이 파일은 저장소에 올리지 않아요 (.gitignore)"] + ["%s=%s" % (k, v) for k, v in vals.items() if v]
@@ -183,14 +183,16 @@ def _set_bot_token():
 
 
 def _signal(cfg, args):
-    """지금 판정을 #봇-시그널에 올려 봄. 돌고 있는 프로그램의 기록(state.json)은 읽기만 함."""
+    """지금 판정을 나에게만(봇 DM) 보내 봄 · 봇 토큰이 없으면 #봇-시그널에. 돌고 있는 프로그램의 기록(state.json)은 읽기만 함."""
     import datetime as dt
     import time
     from . import fmt, ipobot, signalbot
+    from .bot import dm_owner
     from .discord import Discord
     d = Discord(cfg["hooks"], log=store.log)
-    if not d.has("signal"):
-        print("#봇-시그널 웹후크가 아직 없어요. 먼저: python -m candleman hook signal")
+    token = cfg.get("bot_token")
+    if not token and not d.has("signal"):
+        print("보낼 곳이 없어요. 먼저 봇 토큰을 넣어 주세요: python -m candleman bot")
         return 1
     which = args[0] if args else "all"
     if which not in ("all", "btc", "ipo"):
@@ -208,8 +210,11 @@ def _signal(cfg, args):
         else:
             msgs.append(msg)
     for m in msgs:
-        d._post("signal", m["content"], m["embeds"])
-    print("✅ #봇-시그널에 %d개 올렸어요." % len(msgs))
+        if token:
+            dm_owner(token, m)
+        else:
+            d._post("signal", m["content"], m["embeds"])
+    print("✅ %s %d개 보냈어요." % ("나에게만 개인 메시지로" if token else "#봇-시그널에", len(msgs)))
     return 0
 
 

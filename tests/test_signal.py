@@ -1,4 +1,4 @@
-"""#봇-시그널 시험 — BTC 판정(규칙 손계산 · 다음 판정 구간 · 기록) · 신규 추격(표 읽기 · 1위 · 문턱 · 다음 날 판정) · 글 모양 · 울리는 때 · 다른 채널로 새지 않는지."""
+"""시그널 시험 — BTC 판정(규칙 손계산 · 다음 판정 구간 · 기록) · 신규 추격(표 읽기 · 1위 · 문턱 · 다음 날 판정) · 글 모양 · 울리는 때 · 운영자 DM 으로만 가는지 · 다른 채널로 새지 않는지."""
 import asyncio
 import datetime as dt
 import json
@@ -10,6 +10,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from candleman import config, fmt, ipobot, signalbot, store  # noqa: E402
 from candleman.app import App  # noqa: E402
+from candleman.bot import Bot, dm_owner  # noqa: E402
 from candleman.discord import Discord  # noqa: E402
 
 DAY = signalbot.DAY
@@ -104,7 +105,7 @@ class RuleTest(unittest.TestCase):
         rs = signalbot.bands(c, J, 0)
         self.assertEqual([r[2] for r in rs], [True, False, True])               # RSI 과매도 · 그 위 · 50일선 위
         text = signalbot.band_text(rs, "현물 롱", "선물 숏 1배")
-        self.assertRegex(text, r"^\$\d+ 아래 = 현물 롱 · \$\d+ ~ \$\d+ = 선물 숏 1배 \(적중 26%\) · \$\d+ 위 = 현물 롱$")    # 신호가 나는 칸에만
+        self.assertRegex(text, r"^\$\d+ 아래 = 현물 롱 · \$\d+ ~ \$\d+ = 선물 숏 1배 \(적중 26%\) · \$\d+ 위 = 현물 롱$")    # 신호가 나는 구간에만
         self.assertEqual(signalbot.band_text([[1, 2, True]], "롱", "숏"), "지금 종가 ±30% 안에서는 롱")
 
     def test_why_names_the_path(self):
@@ -540,45 +541,52 @@ class BuildTest(unittest.TestCase):
 
 
 class Q:
-    def __init__(self):
+    def __init__(self, hooks=()):
         self.sent = []
+        self.hooks = set(hooks)
         self.ping = set()
 
     def has(self, ch):
-        return ch == "signal"
+        return ch in self.hooks
 
-    async def put(self, ch, text, embeds=None, ring=None):
-        self.sent.append((ch, text, embeds, ring))
+    async def put(self, ch, text, embeds=None):
+        self.sent.append((ch, text, embeds))
 
 
 class AppTest(unittest.TestCase):
-    def app(self, d=None):
+    def app(self, d=None, token="t"):
         app = App.__new__(App)
         app.d = d or Q()
         app.state = {}
+        app.cfg = {"bot_token": token}
+        self.dms = []
         return app
+
+    def dm(self, token, msg):
+        self.dms.append(msg)
 
     def at(self, day, h, m):
         return int(dt.datetime(2026, 11, day, h, m, tzinfo=fmt.KST).timestamp() * 1000)
 
     def run_btc(self, app, n, build=None):
-        with mock.patch.object(store, "save_state"), mock.patch.object(signalbot, "build", build or (lambda n: {"content": "c", "embeds": [], "ring": True})):
+        with mock.patch.object(store, "save_state"), mock.patch("candleman.bot.dm_owner", self.dm), \
+                mock.patch.object(signalbot, "build", build or (lambda n: {"content": "c", "embeds": [], "ring": True})):
             asyncio.run(app._maybe_signal(n))
 
     def test_btc_once_per_close_and_after_a_short_wait(self):
         app = self.app()
-        self.run_btc(app, self.at(2, 22, 0))                                     # 처음 켜면 지난 마감(11/1 23:00)이 바로 올라감
-        self.assertEqual(len(app.d.sent), 1)
-        self.assertEqual(app.d.sent[0][3], True)
+        self.run_btc(app, self.at(2, 22, 0))                                     # 처음 켜면 지난 마감(11/1 23:00)이 바로 감
+        self.assertEqual(len(self.dms), 1)
+        self.assertEqual(self.dms[0]["ring"], True)
         app._signal_next = 0
         self.run_btc(app, self.at(2, 23, 0) + 10_000)                            # 11/2 23:00 마감은 30초를 기다림
-        self.assertEqual(len(app.d.sent), 1)
+        self.assertEqual(len(self.dms), 1)
         app._signal_next = 0
         self.run_btc(app, self.at(2, 23, 1))
-        self.assertEqual(len(app.d.sent), 2)
+        self.assertEqual(len(self.dms), 2)
         app._signal_next = 0
         self.run_btc(app, self.at(2, 23, 30))
-        self.assertEqual(len(app.d.sent), 2)                                     # 같은 마감은 한 번만
+        self.assertEqual(len(self.dms), 2)                                       # 같은 마감은 한 번만
 
     def test_btc_retries_after_failure(self):
         app = self.app()
@@ -589,12 +597,49 @@ class AppTest(unittest.TestCase):
             self.run_btc(app, self.at(2, 23, 1), boom)
         self.assertNotIn("signal_btc_end", app.state)
         self.run_btc(app, self.at(2, 23, 2))                                     # 2분이 안 지났으면 안 봄
-        self.assertEqual(app.d.sent, [])
+        self.assertEqual(self.dms, [])
         self.run_btc(app, self.at(2, 23, 3))
-        self.assertEqual(len(app.d.sent), 1)
+        self.assertEqual(len(self.dms), 1)
+
+    def test_goes_only_to_the_owner_dm(self):
+        app = self.app()
+        self.run_btc(app, self.at(2, 23, 1))
+        self.assertEqual(len(self.dms), 1)
+        self.assertEqual(app.d.sent, [])                                         # 서버 채널로는 아무것도 안 감
+
+    def test_webhook_keeps_a_quiet_copy(self):
+        app = self.app(Q(["signal"]))
+        self.run_btc(app, self.at(2, 23, 1))
+        self.assertEqual(len(self.dms), 1)
+        self.assertEqual(app.d.sent, [("signal", "c", [])])
+
+    def refused(self, app, n):
+        def refuse(token, msg):
+            raise RuntimeError("디스코드 POST channels 실패: HTTP 403")
+        with mock.patch.object(store, "log"), mock.patch.object(store, "save_state"), mock.patch("candleman.bot.dm_owner", refuse), \
+                mock.patch.object(signalbot, "build", lambda n: {"content": "c", "embeds": [], "ring": True}):
+            asyncio.run(app._maybe_signal(n))
+
+    def test_dm_failure_retries_and_tells_status_once(self):
+        app = self.app()
+        n = self.at(2, 23, 1)
+        for i in range(4):
+            with self.assertRaises(RuntimeError):
+                self.refused(app, n + i * signalbot.RETRY)
+        self.assertNotIn("signal_btc_end", app.state)
+        self.assertEqual([s[0] for s in app.d.sent], ["status"])                 # 세 번째 실패 때 한 번만
+        self.run_btc(app, n + 4 * signalbot.RETRY)
+        self.assertEqual(len(self.dms), 1)
+        self.assertIn("signal_btc_end", app.state)
+
+    def test_dm_failure_still_reaches_the_private_channel(self):
+        app = self.app(Q(["signal"]))
+        self.refused(app, self.at(2, 23, 1))
+        self.assertEqual(app.d.sent, [("signal", "c", [])])
+        self.assertIn("signal_btc_end", app.state)
 
     def run_ipo(self, app, n, out):
-        with mock.patch.object(store, "save_state"), mock.patch.object(ipobot, "build", lambda d, r: out):
+        with mock.patch.object(store, "save_state"), mock.patch("candleman.bot.dm_owner", self.dm), mock.patch.object(ipobot, "build", lambda d, r: out):
             asyncio.run(app._maybe_ipo(n))
 
     def test_ipo_posts_once_and_saves_record(self):
@@ -602,10 +647,10 @@ class AppTest(unittest.TestCase):
         self.run_ipo(app, self.at(2, 15, 37), ({"content": "c", "embeds": [], "ring": False}, {"pending": [1]}))
         self.assertEqual(app.state["signal_ipo"], {"pending": [1]})
         self.assertEqual(app.state["signal_ipo_day"], "2026-11-02")
-        self.assertEqual(app.d.sent[0][3], False)
+        self.assertEqual(self.dms[0]["ring"], False)
         app._ipo_next = 0
         self.run_ipo(app, self.at(2, 15, 50), ({"content": "c", "embeds": [], "ring": False}, {}))
-        self.assertEqual(len(app.d.sent), 1)
+        self.assertEqual(len(self.dms), 1)
 
     def test_ipo_closed_day_retries_then_ends_without_post(self):
         app = self.app()
@@ -614,17 +659,52 @@ class AppTest(unittest.TestCase):
         app._ipo_next = 0
         self.run_ipo(app, self.at(2, 16, 10), (None, {}))
         self.assertEqual(app.state["signal_ipo_day"], "2026-11-02")
-        self.assertEqual(app.d.sent, [])
+        self.assertEqual(self.dms, [])
         self.assertNotIn("signal_ipo", app.state)
 
-    def test_nothing_is_sent_without_the_signal_webhook(self):
-        """웹후크가 없으면 #실시간-매매로 새면 안 됨 (_post 의 기본 채널이 trade)."""
+    def test_nothing_is_sent_without_bot_or_webhook(self):
+        """봇 토큰도 웹후크도 없으면 #실시간-매매로 새면 안 됨 (_post 의 기본 채널이 trade)."""
         d = Discord({"trade": "https://discord.com/api/webhooks/1/t"})
-        app = self.app(d)
+        app = self.app(d, token=None)
         with mock.patch.object(signalbot, "build", side_effect=AssertionError("부르면 안 됨")), mock.patch.object(ipobot, "build", side_effect=AssertionError("부르면 안 됨")):
             asyncio.run(app._maybe_signal(self.at(2, 23, 1)))
             asyncio.run(app._maybe_ipo(self.at(2, 15, 40)))
         self.assertEqual(d.q.qsize(), 0)
+
+
+class DmTest(unittest.TestCase):
+    """bot.dm_owner — 서버 주인 한 사람에게만 · 폰 알림은 ring 인 글만."""
+
+    def send(self, msg, guilds=(("g1", "99"),)):
+        calls = []
+
+        def rest(bot, method, path, body=None, **k):
+            calls.append((method, path, body))
+            if path == "/users/@me/guilds":
+                return [{"id": g} for g, _ in guilds]
+            if path.startswith("/guilds/"):
+                return {"owner_id": dict(guilds)[path.split("/")[2]]}
+            return {"id": "dm1"}
+        with mock.patch.object(Bot, "_rest", rest):
+            dm_owner("t", msg)
+        return calls
+
+    def test_ring_post_reaches_only_the_owner(self):
+        calls = self.send({"content": "🔔 BTC 신호", "embeds": [{"title": "카드"}], "ring": True})
+        self.assertEqual(calls[-2], ("POST", "/users/@me/channels", {"recipient_id": "99"}))
+        self.assertEqual(calls[-1], ("POST", "/channels/dm1/messages", {"content": "🔔 BTC 신호", "embeds": [{"title": "카드"}], "allowed_mentions": {"parse": []}}))
+
+    def test_quiet_post_has_no_phone_alert(self):
+        calls = self.send({"content": "📡 BTC 판정", "embeds": [], "ring": False})
+        self.assertEqual(calls[-1][2]["flags"], 4096)
+
+    def test_same_owner_in_two_servers_is_fine(self):
+        calls = self.send({"content": "c", "embeds": [], "ring": True}, guilds=(("g1", "99"), ("g2", "99")))
+        self.assertEqual(calls[-2][2], {"recipient_id": "99"})
+
+    def test_two_owners_send_nothing(self):
+        with self.assertRaises(RuntimeError):
+            self.send({"content": "c", "embeds": [], "ring": True}, guilds=(("g1", "99"), ("g2", "77")))
 
 
 class RingTest(unittest.TestCase):
@@ -635,12 +715,11 @@ class RingTest(unittest.TestCase):
         asyncio.run(self.d.put(*a, **k))
         return self.d.q.get_nowait()
 
-    def test_ring_is_per_post(self):
-        self.assertEqual(self.put("signal", "🔔 BTC 신호", [{"title": "카드"}], ring=True), ("signal", "🔔 BTC 신호 @everyone", [{"title": "카드"}]))
-        self.assertEqual(self.put("signal", "📡 BTC 판정", [{"title": "카드"}], ring=False)[1], "📡 BTC 판정")
+    def test_signal_channel_never_rings(self):
+        self.assertEqual(self.put("signal", "🔔 BTC 신호", [{"title": "카드"}]), ("signal", "🔔 BTC 신호", [{"title": "카드"}]))
         self.assertEqual(self.put("trade", "머리", [{"title": "카드"}])[1], "머리 @everyone")             # 다른 채널은 그대로
 
-    def test_webhook_allows_everyone_for_signal(self):
+    def test_webhook_copy_cannot_mention_anyone(self):
         sent = []
 
         class Resp:
@@ -656,31 +735,37 @@ class RingTest(unittest.TestCase):
             sent.append(json.loads(req.data.decode("utf-8")))
             return Resp()
         with mock.patch("candleman.discord.urllib.request.urlopen", fake_urlopen):
-            self.d._post("signal", "🔔 BTC 신호 @everyone", [{"title": "카드"}])
-        self.assertEqual(sent[0]["allowed_mentions"], {"parse": ["everyone"]})
+            self.d._post("signal", "🔔 BTC 신호", [{"title": "카드"}])
+        self.assertEqual(sent[0]["allowed_mentions"], {"parse": []})
         self.assertTrue(sent[0]["avatar_url"].endswith("/stable/assets/signalbot.png"))
         with mock.patch("candleman.discord.urllib.request.urlopen", fake_urlopen):
             self.d._post("trade", "머리", [{"title": "카드"}])
         self.assertNotIn("avatar_url", sent[1])                                  # 다른 채널은 웹후크 설정 그대로
+        self.assertEqual(sent[1]["allowed_mentions"], {"parse": ["everyone"]})
 
 
 class CommandTest(unittest.TestCase):
-    """python -m candleman signal — 웹후크가 없으면 안 보내고, 있으면 그 채널로만 · 기록은 안 건드림."""
+    """python -m candleman signal — 봇 토큰이 있으면 나에게만 DM · 없으면 웹후크 · 둘 다 없으면 안 보냄 · 기록은 안 건드림."""
     hook = "https://discord.com/api/webhooks/1/s"
 
-    def run_it(self, hooks, args):
+    def run_it(self, hooks, args, token=None):
         from candleman import __main__ as cli
         sent = []
         msg = {"content": "머리", "embeds": [{"title": "카드"}], "ring": True}
         with mock.patch.object(signalbot, "daily", return_value=[]), mock.patch.object(signalbot, "read", return_value={}), \
                 mock.patch.object(signalbot, "compose", return_value=msg), mock.patch.object(ipobot, "build", return_value=(msg, {"pending": [1]})), \
                 mock.patch.object(store, "load_state", return_value={}), mock.patch.object(store, "save_state", side_effect=AssertionError("저장하면 안 됨")), \
-                mock.patch.object(Discord, "_post", lambda self, ch, text, embeds=None: sent.append((ch, text))), mock.patch("builtins.print"):
-            code = cli._signal({"hooks": hooks}, args)
+                mock.patch.object(Discord, "_post", lambda self, ch, text, embeds=None: sent.append((ch, text))), \
+                mock.patch("candleman.bot.dm_owner", lambda tok, m: sent.append(("dm", m["content"]))), mock.patch("builtins.print"):
+            code = cli._signal({"hooks": hooks, "bot_token": token}, args)
         return code, sent
 
-    def test_no_hook(self):
+    def test_no_place_to_send(self):
         self.assertEqual(self.run_it({"trade": "https://discord.com/api/webhooks/1/t"}, []), (1, []))
+
+    def test_bot_token_goes_to_dm_only(self):
+        self.assertEqual(self.run_it({"signal": self.hook}, ["btc"], token="t"), (0, [("dm", "머리")]))
+        self.assertEqual(self.run_it({}, [], token="t"), (0, [("dm", "머리"), ("dm", "머리")]))
 
     def test_each_target(self):
         hooks = {"signal": self.hook}

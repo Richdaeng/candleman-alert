@@ -29,6 +29,7 @@ POS_CHECK_S = 10 * 60          # 체결 소식을 놓쳤을 때를 대비해 이
 SPOT_MOVE_RATE = Decimal("0.01")   # 체결 소식 없이 현물 코인 수량이 이 비율도 넘고
 SPOT_MOVE_USD = Decimal("10")      # 이만큼($) 어치도 넘게 바뀌면 #현재포지션 새 글 (Earn 이자 · 찌꺼기는 아님)
 UPDATE_TRIES = 3               # 자동 업데이트: 시험에 떨어진 같은 판은 이만큼(하루 한 번)까지 다시 시험
+DM_TELL = 3                    # 시그널 DM이 이만큼 연달아 실패하면 #봇-상태에 한 번 알림
 
 
 def now_ms():
@@ -576,23 +577,46 @@ class App:
             self.state["briefing_posted"] = t.date().isoformat()
             store.save_state(self.state)
 
-    # ------------------------------------------------------------------ #봇-시그널
+    # ------------------------------------------------------------------ 시그널 (운영자 DM)
+    def _signal_on(self):
+        """시그널을 보낼 곳이 있는지: 봇(운영자 DM) 또는 #봇-시그널 웹후크."""
+        return bool(self.cfg.get("bot_token")) or self.d.has("signal")
+
+    async def _signal_send(self, msg):
+        """운영자 한 사람에게만 봇 DM으로 보냄(11/1 댕이). 웹후크를 넣어 뒀으면 비공개 #봇-시그널에 조용히 남김(@everyone 없음).
+        DM이 안 되고 웹후크도 없으면 예외 → 조금 뒤 다시. 연달아 실패하면 #봇-상태에 한 번 알림."""
+        token = self.cfg.get("bot_token")
+        if token:
+            from .bot import dm_owner
+            try:
+                await asyncio.to_thread(dm_owner, token, msg)
+                self._dm_fails = 0
+            except Exception as e:
+                self._dm_fails = getattr(self, "_dm_fails", 0) + 1
+                store.log("시그널 DM 실패: %s" % e)
+                if self._dm_fails == DM_TELL:
+                    await self.d.put("status", "⚠️ 시그널 개인 메시지를 못 보내는 중\n%s\n디스코드 → 서버 개인정보 설정의 '서버 멤버가 보내는 다이렉트 메시지 허용'을 확인. 될 때까지 다시 시도함" % str(e)[:160])
+                if not self.d.has("signal"):
+                    raise
+        if self.d.has("signal"):
+            await self.d.put("signal", msg["content"], msg["embeds"])
+
     async def _maybe_signal(self, n):
         """밤 11시 일봉이 닫힐 때마다 BTC 판정을 한 번. 시각이 아니라 마감 봉으로 보므로 폰이 꺼졌다 켜져도 다음 마감까지 안 놓침. 못 받으면 조금 뒤 다시."""
-        if not self.d.has("signal"):
+        if not self._signal_on():
             return
         end = signalbot.closed_end(n)
         if self.state.get("signal_btc_end") == end or n < end + signalbot.WAIT or n < getattr(self, "_signal_next", 0):
             return
         self._signal_next = n + signalbot.RETRY
         msg = await asyncio.to_thread(signalbot.build, n)
-        await self.d.put("signal", msg["content"], msg["embeds"], ring=msg["ring"])
+        await self._signal_send(msg)
         self.state["signal_btc_end"] = end
         store.save_state(self.state)
 
     async def _maybe_ipo(self, n):
         """평일 장 마감 뒤 신규 추격 판정을 한 번. 쉬는 날이면 글 없이 끝."""
-        if not self.d.has("signal"):
+        if not self._signal_on():
             return
         t = fmt.kst(n)
         if not ipobot.due(t, self.state.get("signal_ipo_day")) or n < getattr(self, "_ipo_next", 0):
@@ -602,7 +626,7 @@ class App:
         if msg is None and t.hour * 60 + t.minute < ipobot.LAST_MIN:
             return
         if msg:
-            await self.d.put("signal", msg["content"], msg["embeds"], ring=msg["ring"])
+            await self._signal_send(msg)
             self.state["signal_ipo"] = rec
         self.state["signal_ipo_day"] = t.date().isoformat()
         store.save_state(self.state)
