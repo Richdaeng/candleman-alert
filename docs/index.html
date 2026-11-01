@@ -1,0 +1,856 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+</head>
+<body>
+<title>캔들맨 시그널 랩</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&display=swap">
+<style>
+/* 레이아웃: 어두운 남색 바탕에 패널을 쌓는 시세판. 위부터 지금 상태 → 봇의 선택 → 규칙 성적. 플러스는 빨강, 마이너스는 파랑. */
+:root {
+  color-scheme: dark;
+  --ground: #0b1019;
+  --panel: #111723;
+  --card: #192130;
+  --line: #2b3546;
+  --ink: #f2f5fa;
+  --ink-2: #aab4c4;
+  --ink-3: #818da0;
+  --up: #f2495e;
+  --up-soft: rgba(242, 73, 94, .16);
+  --down: #5a97fa;
+  --down-soft: rgba(90, 151, 250, .16);
+  --safe: #22b391;
+  --bold: #8f7ff8;
+  --hold: #8a96a8;
+  --warn: #e9b44c;
+  --font: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --t-xs: .75rem;
+  --t-sm: .8125rem;
+  --t-md: .9375rem;
+  --t-lg: 1.125rem;
+  --t-xl: 2rem;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: var(--t-md);
+  line-height: 1.55;
+  font-variant-numeric: tabular-nums;
+  padding-block: 16px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+button, select { font: inherit; color: inherit; }
+button { background: none; border: 0; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--bold); outline-offset: 2px; }
+h1, h2, h3, p { margin: 0; }
+.wrap { max-width: 1080px; margin-inline: auto; display: grid; gap: 14px; }
+.wrap > *, .view > * { min-width: 0; }
+.view { display: grid; gap: 14px; }
+
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.brand { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+.brand h1 { font-size: var(--t-lg); font-weight: 800; letter-spacing: -.01em; }
+.brand span { font-size: var(--t-xs); color: var(--ink-3); }
+.seg { display: inline-flex; gap: 2px; padding: 3px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; max-width: 100%; }
+.seg button { padding: 6px 14px; min-height: 36px; border-radius: 7px; color: var(--ink-2); font-size: var(--t-sm); font-weight: 500; white-space: nowrap; }
+.seg button[aria-selected="true"], .seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); font-weight: 700; }
+.sub { display: flex; gap: 20px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.sub button { padding: 8px 2px 10px; color: var(--ink-3); font-size: var(--t-sm); font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.sub button[aria-selected="true"] { color: var(--ink); border-color: var(--ink); font-weight: 700; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 12px; align-content: start; min-width: 0; }
+.panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; }
+.panel-head h2 { font-size: var(--t-md); font-weight: 700; text-wrap: balance; }
+.minor { font-size: var(--t-sm); font-weight: 700; }
+.label { font-size: var(--t-sm); color: var(--ink-2); }
+.pill { display: inline-flex; align-items: center; padding: 2px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--ink-2); font-size: var(--t-xs); white-space: nowrap; }
+.pill.live { color: var(--safe); border-color: var(--safe); }
+.pill.old { color: var(--warn); border-color: var(--warn); }
+.line { font-size: var(--t-sm); color: var(--ink-2); }
+.line.warn { color: var(--warn); }
+.line b { color: var(--ink); font-weight: 500; }
+.note { font-size: var(--t-xs); color: var(--ink-3); line-height: 1.6; }
+.big { font-size: var(--t-xl); font-weight: 800; line-height: 1.15; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.up { color: var(--up); }
+.down { color: var(--down); }
+.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.two > * { min-width: 0; }
+
+.rule { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--tone); border-radius: 12px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.safe, .small { --tone: var(--safe); }
+.bold, .big-rule { --tone: var(--bold); }
+.rule-head { display: flex; align-items: center; gap: 8px; }
+.rule-head h3 { font-size: var(--t-md); font-weight: 700; }
+.rule-head .pill { margin-left: auto; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--tone); flex: none; }
+.line .dot, td .dot { margin-right: 6px; }
+.choice { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; font-size: var(--t-md); }
+.choice strong { font-weight: 700; }
+.state { display: inline-flex; padding: 1px 8px; border-radius: 6px; font-size: var(--t-xs); font-weight: 700; white-space: nowrap; background: var(--line); color: var(--ink-2); }
+.state.in { background: var(--up-soft); color: var(--up); }
+.state.out { background: var(--down-soft); color: var(--down); }
+.mini { width: 100%; border-collapse: collapse; font-size: var(--t-sm); margin-block: 2px; }
+.mini th, .mini td { padding: 3px 0 3px 10px; text-align: right; font-weight: 400; color: var(--ink-3); white-space: nowrap; }
+.mini th:first-child, .mini td:first-child { padding-left: 0; text-align: left; }
+.mini td:not(:first-child) { color: var(--ink); }
+.mini td.up { color: var(--up); }
+.mini td.down { color: var(--down); }
+
+.r-body { position: relative; margin-left: 40px; padding-top: 24px; display: grid; gap: 6px; }
+.r-row { position: relative; }
+.r-row::before { content: attr(data-name); position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%); font-size: var(--t-xs); color: var(--ink-2); white-space: nowrap; }
+.r-track { display: flex; gap: 2px; height: 26px; border-radius: 6px; overflow: hidden; }
+.r-seg { display: flex; align-items: center; justify-content: center; min-width: 0; overflow: hidden; white-space: nowrap; font-size: .6875rem; color: var(--ink-2); background: var(--line); }
+.r-seg.long { background: var(--up-soft); color: var(--up); }
+.r-seg.short { background: var(--down-soft); color: var(--down); }
+.r-now { position: absolute; top: 18px; bottom: 26px; width: 2px; margin-left: -1px; background: var(--ink); }
+.r-now-label { position: absolute; top: 0; font-size: var(--t-xs); font-weight: 700; white-space: nowrap; }
+.r-ticks { position: relative; height: 20px; font-size: var(--t-xs); color: var(--ink-2); }
+.r-ticks span { position: absolute; top: 2px; transform: translateX(-50%); white-space: nowrap; }
+
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.controls select { min-height: 42px; padding: 0 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; font-size: var(--t-sm); max-width: 100%; }
+.tally { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.tally div { background: var(--card); border-radius: 10px; padding: 10px 12px; display: grid; gap: 2px; min-width: 0; }
+.tally span { font-size: var(--t-xs); color: var(--ink-3); }
+.tally strong { font-size: var(--t-lg); font-weight: 700; }
+.chip { display: inline-flex; padding: 1px 8px; border-radius: 6px; font-size: var(--t-xs); font-weight: 700; white-space: nowrap; background: var(--line); color: var(--ink-2); }
+.chip.hit { background: var(--up-soft); color: var(--up); }
+.chip.miss { background: var(--down-soft); color: var(--down); }
+
+.log { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
+.log th { padding: 6px 8px; text-align: left; font-size: var(--t-xs); font-weight: 500; color: var(--ink-3); border-bottom: 1px solid var(--line); white-space: nowrap; }
+.log td { padding: 8px; border-bottom: 1px solid var(--card); color: var(--ink-2); white-space: nowrap; }
+.log td.c-rule { color: var(--ink); }
+.log th.num, .log td.num { text-align: right; }
+.log td.c-ret { font-weight: 700; }
+.log td.c-ret.up { color: var(--up); }
+.log td.c-ret.down { color: var(--down); }
+.days { color: var(--ink-3); }
+
+.table-wrap { overflow-x: auto; }
+.tbl { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
+.tbl th { padding: 6px 8px; text-align: right; font-size: var(--t-xs); font-weight: 500; color: var(--ink-3); border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tbl td { padding: 7px 8px; text-align: right; border-bottom: 1px solid var(--card); white-space: nowrap; }
+.tbl th:first-child, .tbl td:first-child { text-align: left; color: var(--ink-2); }
+.tbl td b, .tbl td span { display: block; font-weight: 500; }
+.tbl td span { font-size: var(--t-xs); opacity: .78; }
+.tbl tr.me td:first-child { color: var(--ink); font-weight: 700; }
+.steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: var(--t-sm); color: var(--ink-2); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: var(--t-xs); color: var(--ink-2); }
+.legend i { display: inline-block; width: 14px; height: 2px; margin-right: 6px; vertical-align: middle; border-radius: 1px; }
+.chart { position: relative; min-width: 0; }
+.chart svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+.tip { position: absolute; top: 8px; z-index: 2; pointer-events: none; padding: 6px 10px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; font-size: var(--t-xs); color: var(--ink); white-space: nowrap; }
+.tip div { color: var(--ink-2); }
+.foot { font-size: var(--t-xs); color: var(--ink-3); text-align: center; line-height: 1.7; }
+
+@media (max-width: 720px) {
+  .two { grid-template-columns: minmax(0, 1fr); }
+  .tally { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .pill { white-space: normal; }
+  .log thead { display: none; }
+  .log, .log tbody { display: block; }
+  .log tr { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 3px 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--card); }
+  .log td { display: block; padding: 0; border: 0; white-space: normal; }
+  .log td.c-rule { grid-area: 1 / 1; }
+  .log td.c-ret { grid-area: 1 / 2; }
+  .log td.c-res { grid-area: 1 / 3; }
+  .log td.c-date { grid-area: 2 / 1 / 2 / 4; font-size: var(--t-xs); }
+  .log td.c-px { grid-area: 3 / 1 / 3 / 4; font-size: var(--t-xs); text-align: left; }
+  .log td.c-kind { grid-area: 4 / 1 / 4 / 4; font-size: var(--t-xs); text-align: left; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sub button, .seg button { transition: color .12s ease; }
+}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><h1>캔들맨 시그널 랩</h1><span id="built"></span></div>
+    <div class="seg" role="tablist" aria-label="시장">
+      <button id="m-btc" role="tab" data-go="btc">BTC 신호</button>
+      <button id="m-ipo" role="tab" data-go="ipo">신규 추격</button>
+    </div>
+  </header>
+  <nav class="sub" id="sub" role="tablist" aria-label="화면"></nav>
+  <main class="view" id="view"></main>
+  <footer class="foot">투자 권유가 아니에요 · 봇은 주문을 내지 않아요 · 시험 값은 규칙을 고른 구간의 사후 값이라 기대치가 아니에요</footer>
+</div>
+
+<script type="application/json" id="seed">{"built":"2026-11-01 23:24","spot":[78056.0,1793543066354],"trades":[{"rule":"safe","side":"long","w":0.5,"from":"2017-11-24","to":"2018-01-11","entry":8165.82,"exit":13754.95,"days":48,"ret":34.12,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-01-11","to":"2018-01-13","entry":13754.95,"exit":14520.0,"days":2,"ret":-5.76,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-01-13","to":"2018-01-14","entry":14520.0,"exit":13399.08,"days":1,"ret":-7.92,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2018-01-13","to":"2018-01-14","entry":14520.0,"exit":13399.08,"days":1,"ret":-3.96,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-01-14","to":"2018-02-20","entry":13399.08,"exit":11537.79,"days":37,"ret":13.69,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-02-20","to":"2018-02-21","entry":11537.79,"exit":10737.29,"days":1,"ret":-7.14,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-02-21","to":"2018-02-27","entry":10737.29,"exit":10851.04,"days":6,"ret":-1.26,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-02-27","to":"2018-02-28","entry":10851.04,"exit":10456.12,"days":1,"ret":-3.84,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-02-28","to":"2018-03-01","entry":10456.12,"exit":10780.0,"days":1,"ret":-3.3,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-03-01","to":"2018-03-08","entry":10780.0,"exit":9870.0,"days":7,"ret":-8.64,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-03-08","to":"2018-04-20","entry":9870.0,"exit":8499.01,"days":43,"ret":13.69,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-04-20","to":"2018-05-16","entry":8499.01,"exit":8155.05,"days":26,"ret":-4.25,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2018-04-24","to":"2018-04-25","entry":9259.99,"exit":9011.79,"days":1,"ret":-1.44,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2018-04-27","to":"2018-05-01","entry":9226.97,"exit":8926.07,"days":4,"ret":-1.73,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2018-05-02","to":"2018-05-11","entry":9106.01,"exit":8525.01,"days":9,"ret":-3.29,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-05-16","to":"2018-05-17","entry":8155.05,"exit":8298.49,"days":1,"ret":-1.96,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-05-17","to":"2018-05-18","entry":8298.49,"exit":8092.57,"days":1,"ret":-2.68,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-05-18","to":"2018-05-21","entry":8092.57,"exit":8482.99,"days":3,"ret":-5.02,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-05-21","to":"2018-05-22","entry":8482.99,"exit":8215.06,"days":1,"ret":-3.36,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-05-22","to":"2018-07-18","entry":8215.06,"exit":7458.14,"days":57,"ret":9.01,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-07-18","to":"2018-08-08","entry":7458.14,"exit":6464.97,"days":21,"ret":-13.52,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2018-07-23","to":"2018-08-02","entry":7719.16,"exit":7495.48,"days":10,"ret":-1.55,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-08-08","to":"2018-08-28","entry":6464.97,"exit":7085.99,"days":20,"ret":-9.81,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-08-28","to":"2018-08-30","entry":7085.99,"exit":6845.23,"days":2,"ret":-3.6,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2018-08-28","to":"2018-08-30","entry":7085.99,"exit":6845.23,"days":2,"ret":-1.8,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-08-30","to":"2018-09-01","entry":6845.23,"exit":7060.01,"days":2,"ret":-3.34,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-09-01","to":"2018-09-05","entry":7060.01,"exit":7033.1,"days":4,"ret":-0.58,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2018-09-01","to":"2018-09-05","entry":7060.01,"exit":7033.1,"days":4,"ret":-0.29,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-09-05","to":"2018-09-21","entry":7033.1,"exit":6727.83,"days":16,"ret":4.14,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-09-21","to":"2018-09-25","entry":6727.83,"exit":6424.83,"days":4,"ret":-4.7,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-09-25","to":"2018-09-28","entry":6424.83,"exit":6652.7,"days":3,"ret":-3.75,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-09-28","to":"2018-09-29","entry":6652.7,"exit":6569.87,"days":1,"ret":-1.45,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-09-29","to":"2018-09-30","entry":6569.87,"exit":6642.01,"days":1,"ret":-1.3,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-09-30","to":"2018-10-01","entry":6642.01,"exit":6565.0,"days":1,"ret":-1.36,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-10-01","to":"2018-10-08","entry":6565.0,"exit":6660.65,"days":7,"ret":-1.66,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-10-08","to":"2018-10-09","entry":6660.65,"exit":6613.82,"days":1,"ret":-0.9,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-10-09","to":"2018-10-15","entry":6613.82,"exit":6948.39,"days":6,"ret":-5.26,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-10-15","to":"2018-10-19","entry":6948.39,"exit":6580.01,"days":4,"ret":-5.5,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2018-10-15","to":"2018-10-16","entry":6948.39,"exit":6754.31,"days":1,"ret":-1.5,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-10-19","to":"2018-10-20","entry":6580.01,"exit":6608.01,"days":1,"ret":-0.63,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-10-20","to":"2018-10-27","entry":6608.01,"exit":6523.23,"days":7,"ret":-1.48,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-10-27","to":"2018-11-07","entry":6523.23,"exit":6575.21,"days":11,"ret":-1.0,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-11-07","to":"2018-11-09","entry":6575.21,"exit":6438.38,"days":2,"ret":-2.28,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-11-09","to":"2018-11-15","entry":6438.38,"exit":5594.98,"days":6,"ret":12.9,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2018-11-15","to":"2018-12-19","entry":5594.98,"exit":3849.75,"days":34,"ret":-31.39,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2018-12-19","to":"2019-01-07","entry":3849.75,"exit":3980.98,"days":19,"ret":-3.61,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2019-01-07","to":"2019-01-10","entry":3980.98,"exit":3725.19,"days":3,"ret":-6.63,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2019-01-10","to":"2019-02-09","entry":3725.19,"exit":3664.0,"days":30,"ret":1.44,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2019-02-09","to":"2019-02-10","entry":3664.0,"exit":3630.78,"days":1,"ret":-1.11,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2019-02-10","to":"2019-02-11","entry":3630.78,"exit":3641.45,"days":1,"ret":-0.49,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2019-02-11","to":"2019-02-12","entry":3641.45,"exit":3622.34,"days":1,"ret":-0.72,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2019-02-12","to":"2019-02-15","entry":3622.34,"exit":3619.59,"days":3,"ret":-0.12,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2019-02-15","to":"2019-07-17","entry":3619.59,"exit":9506.29,"days":152,"ret":162.43,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2019-02-19","to":"2019-07-17","entry":3970.4,"exit":9506.29,"days":148,"ret":69.61,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2019-07-17","to":"2019-07-19","entry":9506.29,"exit":10303.59,"days":2,"ret":-8.59,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2019-07-19","to":"2019-07-23","entry":10303.59,"exit":9956.47,"days":4,"ret":-3.57,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2019-07-19","to":"2019-07-23","entry":10303.59,"exit":9956.47,"days":4,"ret":-1.78,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2019-07-23","to":"2019-08-02","entry":9956.47,"exit":10545.5,"days":10,"ret":-6.12,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2019-08-02","to":"2019-08-14","entry":10545.5,"exit":10590.81,"days":12,"ret":0.23,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2019-08-02","to":"2019-08-14","entry":10545.5,"exit":10590.81,"days":12,"ret":0.11,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2019-08-14","to":"2019-09-03","entry":10590.81,"exit":10666.26,"days":20,"ret":-0.91,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2019-09-03","to":"2019-09-07","entry":10666.26,"exit":10373.58,"days":4,"ret":-2.94,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2019-09-03","to":"2019-09-07","entry":10666.26,"exit":10373.58,"days":4,"ret":-1.47,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2019-09-07","to":"2019-09-25","entry":10373.58,"exit":8393.68,"days":18,"ret":19.33,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2019-09-25","to":"2019-11-16","entry":8393.68,"exit":8488.98,"days":52,"ret":0.94,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2019-11-16","to":"2019-11-17","entry":8488.98,"exit":8530.31,"days":1,"ret":-0.66,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2019-11-17","to":"2019-11-18","entry":8530.31,"exit":8446.0,"days":1,"ret":-1.19,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2019-11-18","to":"2019-11-22","entry":8446.0,"exit":7034.0,"days":4,"ret":16.63,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2019-11-22","to":"2019-12-23","entry":7034.0,"exit":7521.13,"days":31,"ret":6.73,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2019-12-23","to":"2020-01-05","entry":7521.13,"exit":7431.16,"days":13,"ret":1.02,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2020-01-05","to":"2020-02-26","entry":7431.16,"exit":9092.52,"days":52,"ret":22.16,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2020-01-08","to":"2020-01-09","entry":8384.99,"exit":7897.54,"days":1,"ret":-3.01,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2020-01-11","to":"2020-02-26","entry":8090.73,"exit":9092.52,"days":46,"ret":6.09,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2020-02-26","to":"2020-03-12","entry":9092.52,"exit":5995.93,"days":15,"ret":34.84,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2020-03-12","to":"2020-04-06","entry":5995.93,"exit":7098.19,"days":25,"ret":18.18,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2020-04-06","to":"2020-04-17","entry":7098.19,"exit":7059.41,"days":11,"ret":0.32,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2020-04-17","to":"2020-04-21","entry":7059.41,"exit":6834.52,"days":4,"ret":-3.39,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2020-04-21","to":"2020-04-22","entry":6834.52,"exit":7061.97,"days":1,"ret":-3.53,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2020-04-22","to":"2020-06-15","entry":7061.97,"exit":9188.1,"days":54,"ret":29.91,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2020-04-29","to":"2020-06-15","entry":8296.43,"exit":9188.1,"days":47,"ret":5.27,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2020-06-15","to":"2020-06-16","entry":9188.1,"exit":9536.87,"days":1,"ret":-4.02,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2020-06-16","to":"2020-06-20","entry":9536.87,"exit":9290.05,"days":4,"ret":-2.79,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2020-06-16","to":"2020-06-20","entry":9536.87,"exit":9290.05,"days":4,"ret":-1.39,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2020-06-20","to":"2020-06-22","entry":9290.05,"exit":9468.6,"days":2,"ret":-2.09,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2020-06-22","to":"2020-06-24","entry":9468.6,"exit":9351.14,"days":2,"ret":-1.44,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2020-06-22","to":"2020-06-24","entry":9468.6,"exit":9351.14,"days":2,"ret":-0.72,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2020-06-24","to":"2020-07-08","entry":9351.14,"exit":9435.8,"days":14,"ret":-0.7,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2020-07-08","to":"2020-07-10","entry":9435.8,"exit":9185.38,"days":2,"ret":-2.85,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2020-07-08","to":"2020-07-10","entry":9435.8,"exit":9185.38,"days":2,"ret":-1.43,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2020-07-10","to":"2020-07-21","entry":9185.38,"exit":9408.99,"days":11,"ret":-2.3,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2020-07-21","to":"2020-07-22","entry":9408.99,"exit":9329.76,"days":1,"ret":-1.04,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2020-07-21","to":"2020-07-22","entry":9408.99,"exit":9329.76,"days":1,"ret":-0.52,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2020-07-22","to":"2020-07-23","entry":9329.76,"exit":9498.15,"days":1,"ret":-1.97,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2020-07-23","to":"2020-09-03","entry":9498.15,"exit":10917.03,"days":42,"ret":14.74,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2020-07-23","to":"2020-09-03","entry":9498.15,"exit":10917.03,"days":42,"ret":7.37,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2020-09-03","to":"2020-09-08","entry":10917.03,"exit":9990.15,"days":5,"ret":8.45,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2020-09-08","to":"2020-09-15","entry":9990.15,"exit":10834.71,"days":7,"ret":8.25,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2020-09-10","to":"2020-09-11","entry":10437.95,"exit":10262.4,"days":1,"ret":-0.94,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2020-09-12","to":"2020-09-15","entry":10294.01,"exit":10834.71,"days":3,"ret":2.53,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2020-09-15","to":"2020-10-09","entry":10834.71,"exit":11075.35,"days":24,"ret":-2.23,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2020-10-09","to":"2021-04-18","entry":11075.35,"exit":55169.06,"days":191,"ret":397.92,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2020-10-09","to":"2021-04-18","entry":11075.35,"exit":55169.06,"days":191,"ret":198.96,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2021-04-18","to":"2021-04-19","entry":55169.06,"exit":56630.9,"days":1,"ret":-2.82,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2021-04-19","to":"2021-04-20","entry":56630.9,"exit":56318.0,"days":1,"ret":-0.75,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2021-04-19","to":"2021-04-20","entry":56630.9,"exit":56318.0,"days":1,"ret":-0.38,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2021-04-20","to":"2021-05-01","entry":56318.0,"exit":57613.1,"days":11,"ret":-2.1,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2021-05-01","to":"2021-05-02","entry":57613.1,"exit":56680.84,"days":1,"ret":-1.82,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2021-05-01","to":"2021-05-02","entry":57613.1,"exit":56680.84,"days":1,"ret":-0.91,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2021-05-02","to":"2021-05-03","entry":56680.84,"exit":57696.52,"days":1,"ret":-1.87,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2021-05-03","to":"2021-05-04","entry":57696.52,"exit":55461.35,"days":1,"ret":-4.07,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2021-05-03","to":"2021-05-04","entry":57696.52,"exit":55461.35,"days":1,"ret":-2.04,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2021-05-04","to":"2021-05-06","entry":55461.35,"exit":57271.31,"days":2,"ret":-3.16,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2021-05-06","to":"2021-05-11","entry":57271.31,"exit":55750.0,"days":5,"ret":-2.86,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2021-05-06","to":"2021-05-11","entry":57271.31,"exit":55750.0,"days":5,"ret":-1.43,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2021-05-11","to":"2021-05-19","entry":55750.0,"exit":35863.06,"days":8,"ret":36.04,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2021-05-19","to":"2021-06-14","entry":35863.06,"exit":40537.59,"days":26,"ret":12.83,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2021-06-14","to":"2021-07-25","entry":40537.59,"exit":34178.74,"days":41,"ret":15.29,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2021-07-25","to":"2021-09-20","entry":34178.74,"exit":44054.64,"days":57,"ret":28.69,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2021-07-31","to":"2021-08-02","entry":41381.93,"exit":39581.42,"days":2,"ret":-2.28,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2021-08-06","to":"2021-09-20","entry":40924.08,"exit":44054.64,"days":45,"ret":3.72,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2021-09-20","to":"2021-10-01","entry":44054.64,"exit":46980.94,"days":11,"ret":-6.64,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2021-10-01","to":"2021-11-18","entry":46980.94,"exit":59191.64,"days":48,"ret":25.79,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2021-10-01","to":"2021-11-18","entry":46980.94,"exit":59191.64,"days":48,"ret":12.9,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2021-11-18","to":"2022-01-07","entry":59191.64,"exit":41489.19,"days":50,"ret":31.06,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2022-01-07","to":"2022-02-05","entry":41489.19,"exit":41510.7,"days":29,"ret":-0.15,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2022-02-05","to":"2022-02-07","entry":41510.7,"exit":42799.47,"days":2,"ret":-3.26,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2022-02-07","to":"2022-02-12","entry":42799.47,"exit":42099.17,"days":5,"ret":-1.84,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2022-02-12","to":"2022-02-13","entry":42099.17,"exit":42506.34,"days":1,"ret":-1.14,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2022-02-13","to":"2022-02-18","entry":42506.34,"exit":40387.8,"days":5,"ret":-5.18,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2022-02-18","to":"2022-03-01","entry":40387.8,"exit":44416.05,"days":11,"ret":-10.16,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2022-03-01","to":"2022-03-05","entry":44416.05,"exit":39008.04,"days":4,"ret":-12.38,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2022-03-05","to":"2022-03-09","entry":39008.04,"exit":41869.16,"days":4,"ret":-7.5,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2022-03-09","to":"2022-03-10","entry":41869.16,"exit":38864.68,"days":1,"ret":-7.38,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2022-03-10","to":"2022-03-16","entry":38864.68,"exit":40633.83,"days":6,"ret":-4.76,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2022-03-16","to":"2022-04-11","entry":40633.83,"exit":41141.13,"days":26,"ret":1.05,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2022-03-22","to":"2022-03-23","entry":42826.32,"exit":42020.99,"days":1,"ret":-1.04,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2022-03-24","to":"2022-04-11","entry":42984.85,"exit":41141.13,"days":18,"ret":-2.24,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2022-04-11","to":"2022-04-21","entry":41141.13,"exit":42693.0,"days":10,"ret":-3.95,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2022-04-21","to":"2022-04-22","entry":42693.0,"exit":40244.96,"days":1,"ret":-5.93,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2022-04-21","to":"2022-04-22","entry":42693.0,"exit":40244.96,"days":1,"ret":-2.97,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2022-04-22","to":"2022-05-10","entry":40244.96,"exit":31815.76,"days":18,"ret":20.86,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2022-05-10","to":"2022-05-31","entry":31815.76,"exit":31392.79,"days":21,"ret":-1.53,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2022-05-31","to":"2022-06-15","entry":31392.79,"exit":21561.49,"days":15,"ret":31.29,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2022-06-15","to":"2022-07-08","entry":21561.49,"exit":21272.61,"days":23,"ret":-1.54,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2022-07-08","to":"2022-07-20","entry":21272.61,"exit":23781.35,"days":12,"ret":-11.74,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2022-07-20","to":"2022-07-21","entry":23781.35,"exit":22702.3,"days":1,"ret":-4.74,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2022-07-21","to":"2022-07-22","entry":22702.3,"exit":23456.27,"days":1,"ret":-3.49,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2022-07-22","to":"2022-07-23","entry":23456.27,"exit":22339.97,"days":1,"ret":-4.96,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2022-07-23","to":"2022-07-24","entry":22339.97,"exit":22567.75,"days":1,"ret":-1.2,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2022-07-24","to":"2022-07-25","entry":22567.75,"exit":21899.68,"days":1,"ret":-3.16,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2022-07-25","to":"2022-07-28","entry":21899.68,"exit":22854.38,"days":3,"ret":-4.5,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2022-07-28","to":"2022-08-19","entry":22854.38,"exit":21402.27,"days":22,"ret":-6.55,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2022-08-19","to":"2022-09-12","entry":21402.27,"exit":22394.96,"days":24,"ret":-4.77,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2022-09-12","to":"2022-09-13","entry":22394.96,"exit":21196.25,"days":1,"ret":-5.55,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2022-09-12","to":"2022-09-13","entry":22394.96,"exit":21196.25,"days":1,"ret":-2.78,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2022-09-13","to":"2022-10-26","entry":21196.25,"exit":20552.69,"days":43,"ret":3.46,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2022-10-26","to":"2022-11-08","entry":20552.69,"exit":19554.76,"days":13,"ret":-5.06,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2022-11-05","to":"2022-11-08","entry":21271.94,"exit":19554.76,"days":3,"ret":-4.14,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2022-11-08","to":"2023-01-04","entry":19554.76,"exit":16828.4,"days":57,"ret":13.91,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2023-01-04","to":"2023-01-05","entry":16828.4,"exit":16780.79,"days":1,"ret":-0.48,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2023-01-05","to":"2023-01-07","entry":16780.79,"exit":16919.34,"days":2,"ret":-0.99,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2023-01-07","to":"2023-03-03","entry":16919.34,"exit":22402.79,"days":55,"ret":32.21,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2023-01-12","to":"2023-03-03","entry":18284.91,"exit":22402.79,"days":50,"ret":11.16,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2023-03-03","to":"2023-03-10","entry":22402.79,"exit":20184.9,"days":7,"ret":9.77,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2023-03-10","to":"2023-05-02","entry":20184.9,"exit":28009.07,"days":53,"ret":38.56,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2023-03-12","to":"2023-05-02","entry":20383.95,"exit":28009.07,"days":51,"ret":18.6,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2023-05-02","to":"2023-05-03","entry":28009.07,"exit":28373.55,"days":1,"ret":-1.49,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2023-05-03","to":"2023-05-08","entry":28373.55,"exit":27855.78,"days":5,"ret":-2.02,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2023-05-03","to":"2023-05-08","entry":28373.55,"exit":27855.78,"days":5,"ret":-1.01,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2023-05-08","to":"2023-06-21","entry":27855.78,"exit":29311.99,"days":44,"ret":-4.72,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2023-06-21","to":"2023-07-30","entry":29311.99,"exit":29287.92,"days":39,"ret":-0.28,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2023-06-21","to":"2023-07-30","entry":29311.99,"exit":29287.92,"days":39,"ret":-0.14,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2023-07-30","to":"2023-08-18","entry":29287.92,"exit":26241.78,"days":19,"ret":10.71,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2023-08-18","to":"2023-08-30","entry":26241.78,"exit":27376.07,"days":12,"ret":4.12,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2023-08-30","to":"2023-09-29","entry":27376.07,"exit":26895.01,"days":30,"ret":1.67,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2023-09-29","to":"2024-01-17","entry":26895.01,"exit":42609.83,"days":110,"ret":58.23,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2023-10-02","to":"2023-10-03","entry":28544.0,"exit":27549.48,"days":1,"ret":-1.84,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2023-10-16","to":"2024-01-17","entry":27999.99,"exit":42609.83,"days":93,"ret":25.99,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2024-01-17","to":"2024-01-30","entry":42609.83,"exit":43287.61,"days":13,"ret":-1.42,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2024-01-30","to":"2024-01-31","entry":43287.61,"exit":42803.91,"days":1,"ret":-1.32,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2024-01-30","to":"2024-01-31","entry":43287.61,"exit":42803.91,"days":1,"ret":-0.66,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2024-01-31","to":"2024-02-03","entry":42803.91,"exit":43071.6,"days":3,"ret":-0.74,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2024-02-03","to":"2024-02-06","entry":43071.6,"exit":42881.34,"days":3,"ret":-0.64,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2024-02-03","to":"2024-02-06","entry":43071.6,"exit":42881.34,"days":3,"ret":-0.32,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2024-02-06","to":"2024-02-07","entry":42881.34,"exit":43141.97,"days":1,"ret":-0.78,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2024-02-07","to":"2024-04-14","entry":43141.97,"exit":64373.43,"days":67,"ret":49.01,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2024-02-07","to":"2024-04-14","entry":43141.97,"exit":64373.43,"days":67,"ret":24.51,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2024-04-14","to":"2024-05-16","entry":64373.43,"exit":66328.06,"days":32,"ret":-2.78,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2024-05-16","to":"2024-06-17","entry":66328.06,"exit":65200.0,"days":32,"ret":-1.9,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2024-05-16","to":"2024-06-15","entry":66328.06,"exit":66313.47,"days":30,"ret":-0.11,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2024-06-16","to":"2024-06-17","entry":66762.49,"exit":65200.0,"days":1,"ret":-1.27,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2024-06-17","to":"2024-07-17","entry":65200.0,"exit":65141.95,"days":30,"ret":0.53,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2024-07-17","to":"2024-08-03","entry":65141.95,"exit":62007.99,"days":17,"ret":-5.01,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2024-07-17","to":"2024-07-25","entry":65141.95,"exit":64050.01,"days":8,"ret":-0.94,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2024-07-26","to":"2024-08-03","entry":67887.88,"exit":62007.99,"days":8,"ret":-4.43,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2024-08-03","to":"2024-08-05","entry":62007.99,"exit":51951.01,"days":2,"ret":16.06,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2024-08-05","to":"2024-08-28","entry":51951.01,"exit":59334.0,"days":23,"ret":14.01,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2024-08-24","to":"2024-08-26","entry":64221.5,"exit":63766.0,"days":2,"ret":-0.45,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2024-08-28","to":"2024-09-15","entry":59334.0,"exit":60189.99,"days":18,"ret":-1.68,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2024-09-15","to":"2024-09-16","entry":60189.99,"exit":58497.11,"days":1,"ret":-3.01,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2024-09-16","to":"2024-09-18","entry":58497.11,"exit":59508.5,"days":2,"ret":-1.9,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2024-09-18","to":"2024-12-28","entry":59508.5,"exit":94665.29,"days":101,"ret":58.88,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2024-09-19","to":"2024-10-03","entry":63035.98,"exit":60382.06,"days":14,"ret":-2.21,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2024-10-04","to":"2024-10-10","entry":61580.02,"exit":60940.01,"days":6,"ret":-0.62,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2024-10-11","to":"2024-12-28","entry":61675.99,"exit":94665.29,"days":78,"ret":26.64,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2024-12-28","to":"2025-01-04","entry":94665.29,"exit":97973.05,"days":7,"ret":-3.51,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2025-01-04","to":"2025-01-08","entry":97973.05,"exit":95384.01,"days":4,"ret":-2.84,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2025-01-04","to":"2025-01-08","entry":97973.05,"exit":95384.01,"days":4,"ret":-1.42,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2025-01-08","to":"2025-01-15","entry":95384.01,"exit":98963.99,"days":7,"ret":-3.83,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2025-01-15","to":"2025-02-02","entry":98963.99,"exit":98795.89,"days":18,"ret":-0.37,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2025-01-15","to":"2025-02-02","entry":98963.99,"exit":98795.89,"days":18,"ret":-0.18,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2025-02-02","to":"2025-02-07","entry":98795.89,"exit":98828.01,"days":5,"ret":-0.17,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2025-02-07","to":"2025-02-08","entry":98828.01,"exit":96246.69,"days":1,"ret":-2.81,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2025-02-07","to":"2025-02-08","entry":98828.01,"exit":96246.69,"days":1,"ret":-1.41,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2025-02-08","to":"2025-02-21","entry":96246.69,"exit":99334.92,"days":13,"ret":-3.22,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2025-02-21","to":"2025-02-22","entry":99334.92,"exit":96566.04,"days":1,"ret":-2.99,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2025-02-21","to":"2025-02-22","entry":99334.92,"exit":96566.04,"days":1,"ret":-1.49,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2025-02-22","to":"2025-02-28","entry":96566.04,"exit":81512.42,"days":6,"ret":15.47,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2025-02-28","to":"2025-03-24","entry":81512.42,"exit":87704.47,"days":24,"ret":7.4,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2025-03-24","to":"2025-04-15","entry":87704.47,"exit":85589.43,"days":22,"ret":2.42,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2025-04-15","to":"2025-04-16","entry":85589.43,"exit":83736.36,"days":1,"ret":-2.37,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2025-04-16","to":"2025-04-17","entry":83736.36,"exit":84475.14,"days":1,"ret":-1.07,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2025-04-17","to":"2025-06-21","entry":84475.14,"exit":103572.29,"days":65,"ret":22.41,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2025-04-23","to":"2025-06-21","entry":93020.35,"exit":103572.29,"days":59,"ret":5.57,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2025-06-21","to":"2025-06-24","entry":103572.29,"exit":105065.45,"days":3,"ret":-1.61,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2025-06-24","to":"2025-08-18","entry":105065.45,"exit":114839.14,"days":55,"ret":9.1,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2025-06-24","to":"2025-08-18","entry":105065.45,"exit":114839.14,"days":55,"ret":4.55,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2025-08-18","to":"2025-09-12","entry":114839.14,"exit":115166.46,"days":25,"ret":-0.03,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2025-09-12","to":"2025-09-22","entry":115166.46,"exit":113130.63,"days":10,"ret":-1.97,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2025-09-12","to":"2025-09-22","entry":115166.46,"exit":113130.63,"days":10,"ret":-0.98,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2025-09-22","to":"2025-10-01","entry":113130.63,"exit":116806.96,"days":9,"ret":-3.34,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2025-10-01","to":"2025-10-11","entry":116806.96,"exit":112267.86,"days":10,"ret":-4.09,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2025-10-01","to":"2025-10-11","entry":116806.96,"exit":112267.86,"days":10,"ret":-2.04,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2025-10-11","to":"2025-10-13","entry":112267.86,"exit":115345.79,"days":2,"ret":-2.95,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2025-10-13","to":"2025-10-14","entry":115345.79,"exit":111014.38,"days":1,"ret":-3.96,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2025-10-14","to":"2025-10-27","entry":111014.38,"exit":115264.29,"days":13,"ret":-3.99,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2025-10-27","to":"2025-10-29","entry":115264.29,"exit":112873.08,"days":2,"ret":-2.27,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2025-10-27","to":"2025-10-29","entry":115264.29,"exit":112873.08,"days":2,"ret":-1.14,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2025-10-29","to":"2025-11-21","entry":112873.08,"exit":84115.29,"days":23,"ret":25.66,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2025-11-21","to":"2026-01-21","entry":84115.29,"exit":88672.64,"days":61,"ret":5.22,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-01-21","to":"2026-01-28","entry":88672.64,"exit":90257.91,"days":7,"ret":-1.88,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-01-28","to":"2026-01-29","entry":90257.91,"exit":88052.87,"days":1,"ret":-2.64,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-01-29","to":"2026-02-04","entry":88052.87,"exit":74867.0,"days":6,"ret":14.8,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-02-04","to":"2026-03-04","entry":74867.0,"exit":71477.17,"days":28,"ret":-4.73,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-03-04","to":"2026-03-13","entry":71477.17,"exit":73379.18,"days":9,"ret":-2.91,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-03-13","to":"2026-03-14","entry":73379.18,"exit":70847.34,"days":1,"ret":-3.65,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-03-14","to":"2026-03-16","entry":70847.34,"exit":74109.56,"days":2,"ret":-4.81,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-03-16","to":"2026-03-19","entry":74109.56,"exit":69905.65,"days":3,"ret":-5.87,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-03-19","to":"2026-03-21","entry":69905.65,"exit":70740.18,"days":2,"ret":-1.39,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-03-21","to":"2026-03-22","entry":70740.18,"exit":68700.02,"days":1,"ret":-3.08,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-03-22","to":"2026-03-23","entry":68700.02,"exit":71481.13,"days":1,"ret":-4.26,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-03-23","to":"2026-03-27","entry":71481.13,"exit":66188.31,"days":4,"ret":-7.6,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-03-27","to":"2026-04-06","entry":66188.31,"exit":69428.23,"days":10,"ret":-5.1,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-04-06","to":"2026-04-07","entry":69428.23,"exit":68231.99,"days":1,"ret":-1.92,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-04-07","to":"2026-04-08","entry":68231.99,"exit":71600.0,"days":1,"ret":-5.12,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-04-08","to":"2026-05-23","entry":71600.0,"exit":75213.9,"days":45,"ret":4.85,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2026-04-14","to":"2026-04-15","entry":75525.94,"exit":74063.91,"days":1,"ret":-1.07,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2026-04-17","to":"2026-05-23","entry":77340.11,"exit":75213.9,"days":36,"ret":-1.47,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-05-23","to":"2026-05-24","entry":75213.9,"exit":76802.23,"days":1,"ret":-2.29,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-05-24","to":"2026-05-27","entry":76802.23,"exit":75073.4,"days":3,"ret":-2.45,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2026-05-24","to":"2026-05-27","entry":76802.23,"exit":75073.4,"days":3,"ret":-1.23,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-05-27","to":"2026-06-03","entry":75073.4,"exit":66906.0,"days":7,"ret":10.82,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-06-03","to":"2026-06-15","entry":66906.0,"exit":66447.06,"days":12,"ret":-0.89,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-06-15","to":"2026-07-15","entry":66447.06,"exit":65118.0,"days":30,"ret":2.2,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-07-15","to":"2026-07-17","entry":65118.0,"exit":63154.0,"days":2,"ret":-3.22,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-07-17","to":"2026-07-18","entry":63154.0,"exit":64105.99,"days":1,"ret":-1.69,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-07-18","to":"2026-07-28","entry":64105.99,"exit":63104.0,"days":10,"ret":-1.76,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-07-28","to":"2026-07-29","entry":63104.0,"exit":64664.69,"days":1,"ret":-2.65,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-07-29","to":"2026-07-31","entry":64664.69,"exit":63270.72,"days":2,"ret":-2.36,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-07-31","to":"2026-08-03","entry":63270.72,"exit":63351.09,"days":3,"ret":-0.27,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-08-03","to":"2026-08-14","entry":63351.09,"exit":62668.0,"days":11,"ret":-1.28,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-08-14","to":"2026-08-17","entry":62668.0,"exit":63672.37,"days":3,"ret":-1.76,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-08-17","to":"2026-10-15","entry":63672.37,"exit":80208.89,"days":59,"ret":25.77,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2026-08-20","to":"2026-10-15","entry":71692.0,"exit":80208.89,"days":56,"ret":5.84,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-10-15","to":"2026-10-16","entry":80208.89,"exit":82032.01,"days":1,"ret":-2.46,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-10-16","to":"2026-10-22","entry":82032.01,"exit":81700.01,"days":6,"ret":-0.6,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2026-10-16","to":"2026-10-22","entry":82032.01,"exit":81700.01,"days":6,"ret":-0.3,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-10-22","to":"2026-10-23","entry":81700.01,"exit":82008.94,"days":1,"ret":-0.56,"done":true},{"rule":"bold","side":"long","w":1.0,"from":"2026-10-23","to":"2026-10-24","entry":82008.94,"exit":80691.87,"days":1,"ret":-1.81,"done":true},{"rule":"safe","side":"long","w":0.5,"from":"2026-10-23","to":"2026-10-24","entry":82008.94,"exit":80691.87,"days":1,"ret":-0.9,"done":true},{"rule":"bold","side":"short","w":-1.0,"from":"2026-10-24","to":null,"entry":80691.87,"exit":null,"days":7,"ret":null,"done":false}],"bars":[[1750428000000,104283.33,105674.0],[1750514400000,105673.99,103572.29],[1750600800000,103572.29,100865.66],[1750687200000,100865.66,102354.14],[1750773600000,102354.15,105065.44],[1750860000000,105065.45,107923.21],[1750946400000,107923.22,106960.01],[1751032800000,106960.01,106820.99],[1751119200000,106821.0,107101.78],[1751205600000,107101.79,108051.52],[1751292000000,108051.53,107525.49],[1751378400000,107525.49,106807.42],[1751464800000,106807.43,107768.2],[1751551200000,107768.21,110255.63],[1751637600000,110255.64,107970.23],[1751724000000,107970.22,108125.99],[1751810400000,108126.0,108772.17],[1751896800000,108772.18,108536.84],[1751983200000,108536.84,109034.61],[1752069600000,109034.6,109184.0],[1752156000000,109183.99,110800.01],[1752242400000,110801.78,117989.18],[1752328800000,117989.17,117500.0],[1752415200000,117500.0,118610.01],[1752501600000,118610.0,121710.64],[1752588000000,121710.64,118088.13],[1752674400000,118088.13,118700.01],[1752760800000,118700.02,118281.99],[1752847200000,118281.99,118773.38],[1752933600000,118773.38,118188.14],[1753020000000,118188.15,118417.35],[1753106400000,118417.35,118834.0],[1753192800000,118834.0,118147.82],[1753279200000,118147.83,117381.44],[1753365600000,117381.44,118227.48],[1753452000000,118227.48,116216.27],[1753538400000,116216.27,118125.24],[1753624800000,118125.24,118201.99],[1753711200000,118201.99,118434.78],[1753797600000,118434.77,118621.27],[1753884000000,118621.27,117675.79],[1753970400000,117675.78,118557.01],[1754056800000,118557.01,114352.05],[1754143200000,114352.04,113457.85],[1754229600000,113457.86,113939.0],[1754316000000,113939.0,114913.88],[1754402400000,114913.89,114381.43],[1754488800000,114380.75,114270.09],[1754575200000,114270.09,116640.0],[1754661600000,116640.01,116917.97],[1754748000000,116917.98,116968.32],[1754834400000,116968.32,118452.0],[1754920800000,118451.99,120010.0],[1755007200000,120009.99,118847.35],[1755093600000,118847.35,121767.97],[1755180000000,121767.97,118428.85],[1755266400000,118428.86,117770.48],[1755352800000,117770.47,117623.52],[1755439200000,117623.53,118429.99],[1755525600000,118429.99,114839.13],[1755612000000,114839.14,115192.0],[1755698400000,115192.0,112693.15],[1755784800000,112693.14,113486.98],[1755871200000,113486.98,112487.11],[1755957600000,112487.1,114864.92],[1756044000000,114864.92,114555.0],[1756130400000,114555.0,111491.69],[1756216800000,111491.7,110094.66],[1756303200000,110094.66,111487.24],[1756389600000,111487.24,112832.0],[1756476000000,112832.75,109106.14],[1756562400000,109106.14,108531.14],[1756648800000,108531.14,108418.02],[1756735200000,108418.02,109023.61],[1756821600000,109023.61,111149.99],[1756908000000,111149.99,111475.07],[1756994400000,111475.08,110464.0],[1757080800000,110463.99,113084.16],[1757167200000,113084.16,110936.82],[1757253600000,110936.82,111214.62],[1757340000000,111214.63,111906.55],[1757426400000,111906.56,112760.58],[1757512800000,112760.58,113952.0],[1757599200000,113951.99,114628.08],[1757685600000,114630.06,115166.45],[1757772000000,115166.46,115761.05],[1757858400000,115761.06,115348.1],[1757944800000,115348.1,114664.08],[1758031200000,114664.07,115200.0],[1758117600000,115200.0,116107.19],[1758204000000,116107.18,117432.04],[1758290400000,117432.04,116284.64],[1758376800000,116284.63,115915.8],[1758463200000,115915.79,115661.65],[1758549600000,115661.65,113130.63],[1758636000000,113130.63,112952.31],[1758722400000,112952.32,112823.62],[1758808800000,112823.62,111000.0],[1758895200000,111000.0,109669.73],[1758981600000,109669.72,109306.61],[1759068000000,109306.61,109639.0],[1759154400000,109639.0,113227.29],[1759240800000,113227.29,113404.53],[1759327200000,113404.53,116806.96],[1759413600000,116806.96,119621.2],[1759500000000,119621.19,120374.73],[1759586400000,120374.72,122385.42],[1759672800000,122385.42,123161.39],[1759759200000,123161.4,125031.33],[1759845600000,125031.34,123891.68],[1759932000000,123891.68,122599.04],[1760018400000,122599.04,122415.74],[1760104800000,122415.74,121684.2],[1760191200000,121684.18,112267.86],[1760277600000,112267.86,111297.52],[1760364000000,111297.51,115345.79],[1760450400000,115345.79,111014.38],[1760536800000,111014.38,111389.0],[1760623200000,111389.01,110860.0],[1760709600000,110860.0,105835.63],[1760796000000,105835.62,106888.78],[1760882400000,106888.77,108096.34],[1760968800000,108096.33,111161.35],[1761055200000,111161.35,108426.98],[1761141600000,108426.98,108783.36],[1761228000000,108783.35,109500.62],[1761314400000,109500.62,110937.94],[1761400800000,110937.94,111680.91],[1761487200000,111680.92,113711.53],[1761573600000,113711.53,115264.28],[1761660000000,115264.29,115522.9],[1761746400000,115522.91,112873.07],[1761832800000,112873.08,107627.16],[1761919200000,107627.15,110157.54],[1762005600000,110157.54,109946.27],[1762092000000,109946.26,110568.65],[1762178400000,110568.65,107908.68],[1762264800000,107908.68,103924.25],[1762351200000,103924.26,102985.91],[1762437600000,102985.9,103319.71],[1762524000000,103319.71,100347.35],[1762610400000,100347.35,101804.63],[1762696800000,101804.62,102911.39],[1762783200000,102911.4,106548.02],[1762869600000,106548.02,104390.92],[1762956000000,104390.93,105039.99],[1763042400000,105039.99,102326.48],[1763128800000,102326.48,95243.95],[1763215200000,95243.95,96370.16],[1763301600000,96370.17,95420.44],[1763388000000,95420.44,93959.79],[1763474400000,93959.78,91476.56],[1763560800000,91476.56,91405.02],[1763647200000,91405.02,91529.36],[1763733600000,91529.36,84115.28],[1763820000000,84115.29,83947.89],[1763906400000,83947.89,86928.31],[1763992800000,86928.3,86160.0],[1764079200000,86159.84,87083.01],[1764165600000,87083.0,87128.51],[1764252000000,87128.51,90852.78],[1764338400000,90852.79,92377.01],[1764424800000,92377.0,90783.17],[1764511200000,90783.16,91769.99],[1764597600000,91770.0,85986.85],[1764684000000,85986.85,87731.41],[1764770400000,87731.41,93130.88],[1764856800000,93130.89,92516.38],[1764943200000,92516.38,90465.14],[1765029600000,90465.14,89673.73],[1765116000000,89673.73,89053.74],[1765202400000,89053.74,91467.82],[1765288800000,91467.83,90431.03],[1765375200000,90431.02,92093.66],[1765461600000,92093.65,90103.53],[1765548000000,90103.53,92302.79],[1765634400000,92302.79,90245.87],[1765720800000,90245.88,89489.5],[1765807200000,89489.51,89432.0],[1765893600000,89432.01,86443.02],[1765980000000,86443.02,87631.37],[1766066400000,87631.37,88851.7],[1766152800000,88851.7,87997.14],[1766239200000,87997.13,88270.39],[1766325600000,88270.39,87670.1],[1766412000000,87670.1,89912.37],[1766498400000,89912.38,87616.67],[1766584800000,87616.66,87286.9],[1766671200000,87286.9,87638.25],[1766757600000,87638.25,88992.88],[1766844000000,88992.88,87452.78],[1766930400000,87452.79,87896.59],[1767016800000,87896.6,87387.71],[1767103200000,87387.7,88110.02],[1767189600000,88110.02,88991.88],[1767276000000,88991.88,87922.64],[1767362400000,87922.63,89348.68],[1767448800000,89348.67,90004.96],[1767535200000,90004.97,91264.0],[1767621600000,91264.0,92742.74],[1767708000000,92742.73,93716.53],[1767794400000,93716.53,92044.67],[1767880800000,92044.67,89962.14],[1767967200000,89962.14,90607.66],[1768053600000,90607.66,90656.51],[1768140000000,90656.52,90849.45],[1768226400000,90849.45,90636.01],[1768312800000,90636.0,92076.12],[1768399200000,92076.11,94998.19],[1768485600000,94998.2,96846.75],[1768572000000,96846.74,95448.87],[1768658400000,95448.86,95438.32],[1768744800000,95438.32,95146.82],[1768831200000,95146.82,93031.86],[1768917600000,93031.85,90958.88],[1769004000000,90958.89,88672.64],[1769090400000,88672.64,89619.81],[1769176800000,89619.81,89350.81],[1769263200000,89350.8,89368.22],[1769349600000,89368.22,88921.0],[1769436000000,88920.99,87960.01],[1769522400000,87960.01,87982.15],[1769608800000,87982.15,90257.91],[1769695200000,90257.91,88052.88],[1769781600000,88052.87,82740.92],[1769868000000,82740.93,82767.99],[1769954400000,82768.0,78317.51],[1770040800000,78317.51,78224.79],[1770127200000,78224.8,78307.65],[1770213600000,78307.65,74867.0],[1770300000000,74867.0,69688.94],[1770386400000,69688.94,67316.82],[1770472800000,67316.82,69093.98],[1770559200000,69093.98,71514.77],[1770645600000,71514.77,68594.57],[1770732000000,68594.56,69027.95],[1770818400000,69027.94,67454.49],[1770904800000,67454.49,68376.58],[1770991200000,68376.58,67274.15],[1771077600000,67274.14,69460.0],[1771164000000,69460.0,68930.0],[1771250400000,68930.0,68395.1],[1771336800000,68395.11,68136.34],[1771423200000,68136.35,67236.88],[1771509600000,67236.89,65913.37],[1771596000000,65913.38,66801.62],[1771682400000,66801.62,68259.99],[1771768800000,68259.99,67652.38],[1771855200000,67652.38,66132.66],[1771941600000,66132.65,62900.0],[1772028000000,62900.01,66248.62],[1772114400000,66248.63,67905.35],[1772200800000,67905.34,66270.55],[1772287200000,66270.55,65106.44],[1772373600000,65106.45,66934.79],[1772460000000,66934.8,65440.01],[1772546400000,65440.01,66931.31],[1772632800000,66931.32,71477.17],[1772719200000,71477.17,72467.79],[1772805600000,72467.79,69208.0],[1772892000000,69213.18,67931.06],[1772978400000,67931.06,67234.86],[1773064800000,67234.86,68976.0],[1773151200000,68975.8,69921.12],[1773237600000,69921.12,70186.09],[1773324000000,70186.08,69972.15],[1773410400000,69972.2,73379.18],[1773496800000,73379.18,70847.35],[1773583200000,70847.34,71607.54],[1773669600000,71607.54,74109.55],[1773756000000,74109.56,73615.48],[1773842400000,73615.49,72133.49],[1773928800000,72133.48,69905.65],[1774015200000,69905.65,69863.84],[1774101600000,69863.85,70740.18],[1774188000000,70740.18,68700.02],[1774274400000,68700.02,71481.13],[1774360800000,71481.13,70100.46],[1774447200000,70100.46,71581.42],[1774533600000,71581.42,69646.59],[1774620000000,69646.59,66188.32],[1774706400000,66188.31,66835.1],[1774792800000,66835.1,66580.36],[1774879200000,66580.36,67529.52],[1774965600000,67529.52,67302.29],[1775052000000,67302.28,68116.07],[1775138400000,68116.06,66270.87],[1775224800000,66270.87,66672.0],[1775311200000,66671.99,67193.44],[1775397600000,67193.45,66890.7],[1775484000000,66890.7,69428.23],[1775570400000,69428.23,68231.99],[1775656800000,68231.99,71600.01],[1775743200000,71600.0,70801.98],[1775829600000,70801.97,72321.4],[1775916000000,72321.39,72658.07],[1776002400000,72658.07,70889.42],[1776088800000,70889.42,71662.65],[1776175200000,71662.65,75525.94],[1776261600000,75525.94,74063.92],[1776348000000,74063.91,73788.03],[1776434400000,73788.03,77340.12],[1776520800000,77340.11,76122.87],[1776607200000,76122.88,75921.75],[1776693600000,75921.75,75269.38],[1776780000000,75269.37,75899.98],[1776866400000,75899.98,78840.94],[1776952800000,78840.94,77532.23],[1777039200000,77532.23,78093.79],[1777125600000,78093.8,77691.69],[1777212000000,77691.7,77977.79],[1777298400000,77977.79,77746.74],[1777384800000,77746.74,76189.84],[1777471200000,76189.85,76783.43],[1777557600000,76783.42,76420.44],[1777644000000,76420.45,78737.25],[1777730400000,78737.26,78367.06],[1777816800000,78367.06,78670.01],[1777903200000,78670.01,78790.0],[1777989600000,78790.01,81330.0],[1778076000000,81330.0,81670.89],[1778162400000,81670.9,80503.68],[1778248800000,80503.69,79647.8],[1778335200000,79647.81,80391.18],[1778421600000,80391.18,80971.67],[1778508000000,80971.66,81072.0],[1778594400000,81072.01,80466.91],[1778680800000,80466.91,79656.01],[1778767200000,79656.01,79701.73],[1778853600000,79701.73,78758.59],[1778940000000,78758.59,78014.6],[1779026400000,78014.6,78202.91],[1779112800000,78202.91,76937.7],[1779199200000,76937.7,76872.75],[1779285600000,76872.74,77204.61],[1779372000000,77204.61,77122.68],[1779458400000,77122.67,77290.01],[1779544800000,77290.0,75213.9],[1779631200000,75213.9,76802.23],[1779717600000,76802.23,77341.05],[1779804000000,77341.05,77231.56],[1779890400000,77231.56,75073.4],[1779976800000,75073.4,73022.02],[1780063200000,73022.01,73135.7],[1780149600000,73135.7,73829.31],[1780236000000,73829.31,73872.8],[1780322400000,73872.8,71711.89],[1780408800000,71711.89,68811.91],[1780495200000,68809.93,66906.01],[1780581600000,66906.0,64230.0],[1780668000000,64230.0,60732.36],[1780754400000,60732.36,60801.2],[1780840800000,60801.2,61700.13],[1780927200000,61700.14,63758.0],[1781013600000,63758.0,62273.61],[1781100000000,62273.62,62146.42],[1781186400000,62146.43,63077.57],[1781272800000,63077.71,63229.1],[1781359200000,63229.1,64102.69],[1781445600000,64102.61,64317.99],[1781532000000,64318.0,66447.05],[1781618400000,66447.06,66052.0],[1781704800000,66052.01,65278.0],[1781791200000,65278.0,63984.0],[1781877600000,63983.99,63210.0],[1781964000000,63210.0,63397.78],[1782050400000,63397.77,64146.0],[1782136800000,64146.0,65578.0],[1782223200000,65577.99,62475.99],[1782309600000,62476.0,61338.01],[1782396000000,61338.0,58290.17],[1782482400000,58291.7,60175.43],[1782568800000,60175.42,60588.35],[1782655200000,60588.35,60071.88],[1782741600000,60071.89,59580.0],[1782828000000,59580.0,58737.18],[1782914400000,58737.17,59498.03],[1783000800000,59498.03,61939.04],[1783087200000,61939.04,62116.01],[1783173600000,62116.0,62588.84],[1783260000000,62588.84,62792.0],[1783346400000,62791.99,61768.21],[1783432800000,61768.2,63056.0],[1783519200000,63056.0,61945.49],[1783605600000,61945.49,63028.35],[1783692000000,63028.36,64484.0],[1783778400000,64484.0,64235.66],[1783864800000,64235.67,64023.14],[1783951200000,64023.13,62318.0],[1784037600000,62318.01,63840.01],[1784124000000,63840.01,65117.99],[1784210400000,65118.0,64376.0],[1784296800000,64375.99,63153.99],[1784383200000,63154.0,64106.0],[1784469600000,64105.99,64483.31],[1784556000000,64483.32,64344.01],[1784642400000,64344.01,66786.0],[1784728800000,66786.0,65951.39],[1784815200000,65951.38,64880.0],[1784901600000,64880.0,64155.46],[1784988000000,64155.47,64172.0],[1785074400000,64172.01,64518.0],[1785160800000,64517.99,65217.37],[1785247200000,65217.38,63104.0],[1785333600000,63104.0,64664.7],[1785420000000,64664.69,65022.01],[1785506400000,65022.0,63270.73],[1785592800000,63270.72,63069.32],[1785679200000,63069.31,63126.92],[1785765600000,63126.92,63351.09],[1785852000000,63351.09,63683.94],[1785938400000,63683.95,64407.99],[1786024800000,64407.99,64434.01],[1786111200000,64434.01,65009.24],[1786197600000,65009.23,65015.27],[1786284000000,65015.27,65219.78],[1786370400000,65219.78,64561.98],[1786456800000,64561.98,64200.28],[1786543200000,64200.29,63840.0],[1786629600000,63840.0,63724.0],[1786716000000,63723.99,62668.0],[1786802400000,62668.0,63060.35],[1786888800000,63060.34,63060.01],[1786975200000,63060.01,63672.36],[1787061600000,63672.37,64219.99],[1787148000000,64219.99,65012.12],[1787234400000,65012.12,71691.99],[1787320800000,71692.0,77266.87],[1787407200000,77266.88,77288.62],[1787493600000,77288.62,77487.62],[1787580000000,77487.62,78597.99],[1787666400000,78597.99,78647.99],[1787752800000,78648.0,78448.66],[1787839200000,78448.66,79533.15],[1787925600000,79533.16,79330.75],[1788012000000,79330.34,77704.32],[1788098400000,77704.32,78860.0],[1788184800000,78860.01,77867.39],[1788271200000,77867.39,78071.99],[1788357600000,78072.0,77146.0],[1788444000000,77146.0,78840.52],[1788530400000,78840.52,79378.67],[1788616800000,79378.66,79613.67],[1788703200000,79613.67,79829.98],[1788789600000,79829.99,79352.01],[1788876000000,79352.0,77961.66],[1788962400000,77961.66,79140.69],[1789048800000,79140.69,77174.44],[1789135200000,77174.43,79242.56],[1789221600000,79242.56,77366.52],[1789308000000,77366.52,76853.02],[1789394400000,76853.01,78168.01],[1789480800000,78168.01,76618.77],[1789567200000,76618.77,75646.01],[1789653600000,75646.01,76694.07],[1789740000000,76694.06,80073.09],[1789826400000,80073.09,81364.01],[1789912800000,81364.0,80564.57],[1789999200000,80564.58,85466.34],[1790085600000,85466.35,86346.01],[1790172000000,86346.01,85792.01],[1790258400000,85792.01,84258.43],[1790344800000,84258.42,83923.71],[1790431200000,83923.71,83939.1],[1790517600000,83939.11,85030.41],[1790604000000,85030.41,83641.99],[1790690400000,83641.99,84200.01],[1790776800000,84200.01,84637.74],[1790863200000,84637.74,83939.67],[1790949600000,83938.6,86565.05],[1791036000000,86565.06,84870.04],[1791122400000,84870.03,85241.14],[1791208800000,85241.15,86432.01],[1791295200000,86432.0,86324.01],[1791381600000,86324.01,83192.01],[1791468000000,83192.02,82182.01],[1791554400000,82182.01,82627.6],[1791640800000,82627.59,82830.26],[1791727200000,82830.25,83083.1],[1791813600000,83083.09,82968.61],[1791900000000,82968.6,83278.01],[1791986400000,83278.0,82324.16],[1792072800000,82324.16,80208.89],[1792159200000,80208.89,82032.0],[1792245600000,82032.01,81500.0],[1792332000000,81500.0,81540.15],[1792418400000,81540.16,82125.85],[1792504800000,82125.85,82149.2],[1792591200000,82149.2,83826.01],[1792677600000,83826.0,81700.01],[1792764000000,81700.01,82008.95],[1792850400000,82008.94,80691.86],[1792936800000,80691.87,80386.09],[1793023200000,80386.09,79702.63],[1793109600000,79702.64,80045.0],[1793196000000,80044.99,80740.01],[1793282400000,80740.0,80305.21],[1793368800000,80305.22,77174.0],[1793455200000,77174.0,77543.02],[1793541600000,77543.01,78035.45]],"curve":[["2019-02",0.9287,1.0,0.8611],["2019-03",1.0336,0.9881,0.8423],["2019-04",1.1162,1.0259,0.9103],["2019-05",1.4447,1.1818,1.1783],["2019-06",2.3085,1.5872,1.8901],["2019-07",2.942,1.888,2.3815],["2019-08",2.7071,1.6711,1.8113],["2019-09",2.5927,1.6444,1.8395],["2019-10",2.2484,1.6142,1.7935],["2019-11",2.4644,1.6142,1.8456],["2019-12",1.982,1.6142,1.7093],["2020-01",1.9489,1.6142,1.7888],["2020-02",2.5323,1.7015,2.1958],["2020-03",2.3067,1.6632,2.2584],["2020-04",1.7001,1.6632,3.4485],["2020-05",2.3656,1.6503,4.7162],["2020-06",2.5815,1.732,5.1551],["2020-07",2.4734,1.666,4.7673],["2020-08",3.1367,1.8588,5.4048],["2020-09",3.2044,1.8782,5.5798],["2020-10",2.9195,1.7657,4.8339],["2020-11",3.7094,2.0003,6.0221],["2020-12",5.2286,2.4207,8.437],["2021-01",7.8803,3.2493,12.7294],["2021-02",9.0799,3.5997,14.3749],["2021-03",12.8319,4.8163,21.11],["2021-04",15.8718,5.6399,25.8592],["2021-05",15.5654,5.3339,23.3301],["2021-06",9.877,5.0017,22.5343],["2021-07",9.0417,5.0017,24.5051],["2021-08",11.2023,5.0164,28.4507],["2021-09",12.7944,5.3454,32.7083],["2021-10",12.6501,4.9738,25.1202],["2021-11",16.5705,5.6479,31.3516],["2021-12",15.4234,5.4922,29.496],["2022-01",12.6739,5.4922,35.0911],["2022-02",10.3852,5.4922,38.9087],["2022-03",11.7427,5.4922,33.1805],["2022-04",12.1933,5.7099,27.6766],["2022-05",10.2578,5.2573,25.5506],["2022-06",8.5084,5.2573,28.4905],["2022-07",5.2438,5.2573,32.5188],["2022-08",6.2696,5.2573,26.0077],["2022-09",5.3905,5.2573,25.7536],["2022-10",5.2168,5.0043,22.689],["2022-11",5.5357,4.9925,21.759],["2022-12",4.6069,4.7049,22.0961],["2023-01",4.4663,4.7049,22.1294],["2023-02",6.2367,5.3012,29.208],["2023-03",6.3877,5.3451,30.0426],["2023-04",7.6741,6.1689,44.9064],["2023-05",7.6882,6.1674,44.8176],["2023-06",7.2476,6.0223,43.3221],["2023-07",8.2246,6.2791,43.2613],["2023-08",7.8186,6.125,41.3218],["2023-09",7.0014,6.0961,49.993],["2023-10",7.3174,6.0961,47.9788],["2023-11",9.3152,6.7469,60.73],["2023-12",10.3389,7.1353,68.2373],["2024-01",11.5068,7.6072,75.4985],["2024-02",11.3986,7.4688,71.4401],["2024-03",16.6541,8.9705,96.8181],["2024-04",18.7524,9.6609,107.8797],["2024-05",15.577,9.1211,111.5477],["2024-06",18.2708,9.2021,102.458],["2024-07",17.0141,9.1001,101.8775],["2024-08",17.3595,8.8695,92.7543],["2024-09",15.7221,8.541,117.5843],["2024-10",17.1323,8.5874,111.1942],["2024-11",18.8208,8.8521,110.002],["2024-12",26.0925,10.6759,153.362],["2025-01",25.3669,10.4162,144.8356],["2025-02",27.5328,10.332,126.6687],["2025-03",22.9894,9.969,140.2722],["2025-04",22.6121,9.969,147.807],["2025-05",25.8326,10.1574,155.4684],["2025-06",28.2171,10.601,170.115],["2025-07",28.7552,10.5615,167.3836],["2025-08",31.0723,10.847,175.0791],["2025-09",29.2969,10.6767,175.4664],["2025-10",31.3471,10.5865,162.1604],["2025-11",29.6862,10.2899,143.8829],["2025-12",23.2592,10.2899,173.2374],["2026-01",23.7228,10.2899,176.8673],["2026-02",21.1232,10.2219,203.7214],["2026-03",18.0155,10.2219,194.4688],["2026-04",18.4546,10.2219,183.5828],["2026-05",20.8707,10.3941,189.566],["2026-06",19.5514,10.1687,182.2527],["2026-07",15.9974,10.1687,207.9974],["2026-08",16.9949,10.1687,189.8712],["2026-09",21.0527,10.8029,220.623],["2026-10",22.6756,11.2781,239.8608],["2026-10",20.8891,10.8946,228.3314]],"ipo":{"trades":[{"rule":"big","day":"2026-03-09","next":"2026-03-10","name":"에스팀","n":2,"value":570987406325.0,"entry":23800.0,"kind":"l","ret":-6.3,"eq":0.937},{"rule":"big","day":"2026-03-16","next":"2026-03-17","name":"카나프테라퓨틱스","n":1,"value":1341056818775.0,"entry":50600.0,"kind":"w","ret":9.7,"eq":1.0279},{"rule":"big","day":"2026-03-25","next":"2026-03-26","name":"한패스","n":1,"value":1275542737850.0,"entry":27200.0,"kind":"l","ret":-6.3,"eq":0.9631},{"rule":"big","day":"2026-03-26","next":"2026-03-27","name":"메쥬","n":1,"value":803392457675.0,"entry":39000.0,"kind":"a","ret":-6.3,"eq":0.9025},{"rule":"big","day":"2026-03-31","next":"2026-04-01","name":"리센스메디컬","n":1,"value":659994590680.0,"entry":18450.0,"kind":"w","ret":9.7,"eq":0.99},{"rule":"big","day":"2026-04-02","next":"2026-04-03","name":"인벤테라","n":1,"value":1651221830375.0,"entry":35250.0,"kind":"W","ret":13.6,"eq":1.1246},{"rule":"big","day":"2026-04-29","next":"2026-04-30","name":"채비","n":1,"value":2905976098660.0,"entry":22550.0,"kind":"w","ret":9.7,"eq":1.2337},{"rule":"big","day":"2026-04-30","next":"2026-05-04","name":"채비","n":2,"value":562189953250.0,"entry":21150.0,"kind":"l","ret":-6.3,"eq":1.156},{"rule":"big","day":"2026-05-11","next":"2026-05-12","name":"코스모로보틱스","n":1,"value":916497217500.0,"entry":24000.0,"kind":"w","ret":9.7,"eq":1.2681},{"rule":"big","day":"2026-05-15","next":"2026-05-18","name":"코스모로보틱스","n":5,"value":1590280662075.0,"entry":44100.0,"kind":"a","ret":-6.3,"eq":1.1882},{"rule":"big","day":"2026-05-18","next":"2026-05-19","name":"코스모로보틱스","n":6,"value":579011202275.0,"entry":37400.0,"kind":"l","ret":-6.3,"eq":1.1134},{"rule":"big","day":"2026-05-19","next":"2026-05-20","name":"코스모로보틱스","n":7,"value":1230784461925.0,"entry":48600.0,"kind":"w","ret":9.7,"eq":1.2214},{"rule":"big","day":"2026-05-20","next":"2026-05-21","name":"코스모로보틱스","n":8,"value":1834680568150.0,"entry":56200.0,"kind":"w","ret":9.7,"eq":1.3399},{"rule":"big","day":"2026-05-21","next":"2026-05-22","name":"코스모로보틱스","n":9,"value":779736966250.0,"entry":54400.0,"kind":"l","ret":-6.3,"eq":1.2554},{"rule":"big","day":"2026-05-22","next":"2026-05-26","name":"마키나락스","n":3,"value":602866307900.0,"entry":54600.0,"kind":"l","ret":-6.3,"eq":1.1764},{"rule":"big","day":"2026-06-08","next":"2026-06-09","name":"피스피스스튜디오","n":1,"value":677196462120.0,"entry":13730.0,"kind":"w","ret":9.7,"eq":1.2905},{"rule":"big","day":"2026-06-29","next":"2026-06-30","name":"져스텍","n":1,"value":790751283275.0,"entry":17530.0,"kind":"a","ret":-6.3,"eq":1.2092},{"rule":"big","day":"2026-07-01","next":"2026-07-02","name":"매드업","n":1,"value":1100910163680.0,"entry":10080.0,"kind":"w","ret":9.7,"eq":1.3264},{"rule":"big","day":"2026-07-06","next":"2026-07-07","name":"레몬헬스케어","n":1,"value":974315401795.0,"entry":9400.0,"kind":"w","ret":9.7,"eq":1.4551},{"rule":"big","day":"2026-07-13","next":"2026-07-14","name":"레메디","n":1,"value":758388028750.0,"entry":22000.0,"kind":"l","ret":-6.3,"eq":1.3634},{"rule":"big","day":"2026-08-13","next":"2026-08-14","name":"케이앤에스아이앤씨","n":1,"value":501033266320.0,"entry":15380.0,"kind":"w","ret":9.7,"eq":1.4957},{"rule":"big","day":"2026-09-04","next":"2026-09-07","name":"스카이랩스","n":1,"value":1671864448935.0,"entry":23500.0,"kind":"w","ret":9.7,"eq":1.6408},{"rule":"big","day":"2026-09-07","next":"2026-09-08","name":"스카이랩스","n":2,"value":779968221425.0,"entry":30550.0,"kind":"w","ret":9.7,"eq":1.7999},{"rule":"big","day":"2026-09-08","next":"2026-09-09","name":"스카이랩스","n":3,"value":1126929821300.0,"entry":29750.0,"kind":"w","ret":9.7,"eq":1.9745},{"rule":"big","day":"2026-09-09","next":"2026-09-10","name":"스카이랩스","n":4,"value":544714545000.0,"entry":30300.0,"kind":"l","ret":-6.3,"eq":1.8501},{"rule":"big","day":"2026-09-21","next":"2026-09-22","name":"네오사피엔스","n":1,"value":978169951175.0,"entry":34300.0,"kind":"w","ret":9.7,"eq":2.0296},{"rule":"big","day":"2026-09-23","next":"2026-09-28","name":"와이즈플래닛컴퍼니","n":1,"value":1004626426500.0,"entry":46300.0,"kind":"l","ret":-6.3,"eq":1.9017},{"rule":"big","day":"2026-09-29","next":"2026-09-30","name":"글로벌테크놀로지","n":1,"value":1025456553820.0,"entry":18220.0,"kind":"L","ret":-21.71,"eq":1.489},{"rule":"big","day":"2026-09-30","next":"2026-10-01","name":"덕산넵코어스","n":1,"value":930503450150.0,"entry":17980.0,"kind":"w","ret":9.7,"eq":1.6334},{"rule":"big","day":"2026-10-01","next":"2026-10-02","name":"브릴스","n":1,"value":622667111025.0,"entry":30450.0,"kind":"w","ret":9.7,"eq":1.7918},{"rule":"big","day":"2026-10-15","next":"2026-10-16","name":"멜콘","n":1,"value":554839968350.0,"entry":17470.0,"kind":"w","ret":9.7,"eq":1.9656},{"rule":"big","day":"2026-10-22","next":"2026-10-23","name":"엠에스바이오","n":1,"value":976882005690.0,"entry":13320.0,"kind":"l","ret":-6.3,"eq":1.8418},{"rule":"big","day":"2026-10-23","next":"2026-10-26","name":"디티에스","n":1,"value":703575123100.0,"entry":25000.0,"kind":"w","ret":9.7,"eq":2.0205},{"rule":"big","day":"2026-10-29","next":"2026-10-30","name":"티앤이코리아","n":1,"value":539080473925.0,"entry":21500.0,"kind":"L","ret":-8.44,"eq":1.8499},{"rule":"small","day":"2026-03-09","next":"2026-03-10","name":"에스팀","n":2,"value":570987406325.0,"entry":23800.0,"kind":"W","ret":4.74,"eq":1.0474},{"rule":"small","day":"2026-03-10","next":"2026-03-11","name":"액스비스","n":2,"value":386252126775.0,"entry":36750.0,"kind":"w","ret":4.0,"eq":1.0893},{"rule":"small","day":"2026-03-16","next":"2026-03-17","name":"카나프테라퓨틱스","n":1,"value":1341056818775.0,"entry":50600.0,"kind":"w","ret":4.0,"eq":1.1329},{"rule":"small","day":"2026-03-25","next":"2026-03-26","name":"한패스","n":1,"value":1275542737850.0,"entry":27200.0,"kind":"w","ret":4.0,"eq":1.1782},{"rule":"small","day":"2026-03-26","next":"2026-03-27","name":"메쥬","n":1,"value":803392457675.0,"entry":39000.0,"kind":"w","ret":4.0,"eq":1.2253},{"rule":"small","day":"2026-03-31","next":"2026-04-01","name":"리센스메디컬","n":1,"value":659994590680.0,"entry":18450.0,"kind":"w","ret":4.0,"eq":1.2743},{"rule":"small","day":"2026-04-02","next":"2026-04-03","name":"인벤테라","n":1,"value":1651221830375.0,"entry":35250.0,"kind":"W","ret":13.6,"eq":1.4477},{"rule":"small","day":"2026-04-29","next":"2026-04-30","name":"채비","n":1,"value":2905976098660.0,"entry":22550.0,"kind":"W","ret":6.13,"eq":1.5364},{"rule":"small","day":"2026-04-30","next":"2026-05-04","name":"채비","n":2,"value":562189953250.0,"entry":21150.0,"kind":"o","ret":-5.78,"eq":1.4475},{"rule":"small","day":"2026-05-07","next":"2026-05-08","name":"채비","n":5,"value":306851038590.0,"entry":17540.0,"kind":"w","ret":4.0,"eq":1.5054},{"rule":"small","day":"2026-05-11","next":"2026-05-12","name":"코스모로보틱스","n":1,"value":916497217500.0,"entry":24000.0,"kind":"W","ret":5.32,"eq":1.5856},{"rule":"small","day":"2026-05-12","next":"2026-05-13","name":"코스모로보틱스","n":2,"value":340997886900.0,"entry":31200.0,"kind":"W","ret":13.48,"eq":1.7994},{"rule":"small","day":"2026-05-13","next":"2026-05-14","name":"코스모로보틱스","n":3,"value":398292870750.0,"entry":40550.0,"kind":"W","ret":16.35,"eq":2.0935},{"rule":"small","day":"2026-05-14","next":"2026-05-15","name":"코스모로보틱스","n":4,"value":321850796300.0,"entry":52700.0,"kind":"W","ret":19.43,"eq":2.5004},{"rule":"small","day":"2026-05-15","next":"2026-05-18","name":"코스모로보틱스","n":5,"value":1590280662075.0,"entry":44100.0,"kind":"a","ret":-10.3,"eq":2.2428},{"rule":"small","day":"2026-05-18","next":"2026-05-19","name":"코스모로보틱스","n":6,"value":579011202275.0,"entry":37400.0,"kind":"w","ret":4.0,"eq":2.3325},{"rule":"small","day":"2026-05-19","next":"2026-05-20","name":"코스모로보틱스","n":7,"value":1230784461925.0,"entry":48600.0,"kind":"W","ret":6.7,"eq":2.4887},{"rule":"small","day":"2026-05-20","next":"2026-05-21","name":"코스모로보틱스","n":8,"value":1834680568150.0,"entry":56200.0,"kind":"w","ret":4.0,"eq":2.5883},{"rule":"small","day":"2026-05-21","next":"2026-05-22","name":"코스모로보틱스","n":9,"value":779736966250.0,"entry":54400.0,"kind":"l","ret":-10.3,"eq":2.3217},{"rule":"small","day":"2026-05-22","next":"2026-05-26","name":"마키나락스","n":3,"value":602866307900.0,"entry":54600.0,"kind":"l","ret":-10.3,"eq":2.0825},{"rule":"small","day":"2026-05-26","next":"2026-05-27","name":"코스모로보틱스","n":11,"value":440932990500.0,"entry":45000.0,"kind":"w","ret":4.0,"eq":2.1658},{"rule":"small","day":"2026-05-28","next":"2026-05-29","name":"코스모로보틱스","n":13,"value":328855310800.0,"entry":41300.0,"kind":"w","ret":4.0,"eq":2.2525},{"rule":"small","day":"2026-06-05","next":"2026-06-08","name":"코스모로보틱스","n":18,"value":339612369550.0,"entry":28450.0,"kind":"L","ret":-11.2,"eq":2.0003},{"rule":"small","day":"2026-06-08","next":"2026-06-09","name":"피스피스스튜디오","n":1,"value":677196462120.0,"entry":13730.0,"kind":"W","ret":5.45,"eq":2.1094},{"rule":"small","day":"2026-06-29","next":"2026-06-30","name":"져스텍","n":1,"value":790751283275.0,"entry":17530.0,"kind":"w","ret":4.0,"eq":2.1938},{"rule":"small","day":"2026-07-01","next":"2026-07-02","name":"매드업","n":1,"value":1100910163680.0,"entry":10080.0,"kind":"W","ret":7.14,"eq":2.3504},{"rule":"small","day":"2026-07-06","next":"2026-07-07","name":"레몬헬스케어","n":1,"value":974315401795.0,"entry":9400.0,"kind":"W","ret":8.53,"eq":2.5509},{"rule":"small","day":"2026-07-08","next":"2026-07-09","name":"레몬헬스케어","n":3,"value":352032356030.0,"entry":10190.0,"kind":"w","ret":4.0,"eq":2.6529},{"rule":"small","day":"2026-07-13","next":"2026-07-14","name":"레메디","n":1,"value":758388028750.0,"entry":22000.0,"kind":"W","ret":4.25,"eq":2.7655},{"rule":"small","day":"2026-07-24","next":"2026-07-27","name":"에이치엘지노믹스","n":1,"value":396413518285.0,"entry":14790.0,"kind":"w","ret":4.0,"eq":2.8762},{"rule":"small","day":"2026-08-03","next":"2026-08-04","name":"코스모로보틱스","n":58,"value":320046361550.0,"entry":17880.0,"kind":"o","ret":0.04,"eq":2.8772},{"rule":"small","day":"2026-08-13","next":"2026-08-14","name":"케이앤에스아이앤씨","n":1,"value":501033266320.0,"entry":15380.0,"kind":"w","ret":4.0,"eq":2.9923},{"rule":"small","day":"2026-09-04","next":"2026-09-07","name":"스카이랩스","n":1,"value":1671864448935.0,"entry":23500.0,"kind":"w","ret":4.0,"eq":3.112},{"rule":"small","day":"2026-09-07","next":"2026-09-08","name":"스카이랩스","n":2,"value":779968221425.0,"entry":30550.0,"kind":"w","ret":4.0,"eq":3.2364},{"rule":"small","day":"2026-09-08","next":"2026-09-09","name":"스카이랩스","n":3,"value":1126929821300.0,"entry":29750.0,"kind":"W","ret":5.92,"eq":3.428},{"rule":"small","day":"2026-09-09","next":"2026-09-10","name":"스카이랩스","n":4,"value":544714545000.0,"entry":30300.0,"kind":"l","ret":-10.3,"eq":3.0749},{"rule":"small","day":"2026-09-11","next":"2026-09-14","name":"스카이랩스","n":6,"value":352178642050.0,"entry":25550.0,"kind":"w","ret":4.0,"eq":3.1979},{"rule":"small","day":"2026-09-21","next":"2026-09-22","name":"네오사피엔스","n":1,"value":978169951175.0,"entry":34300.0,"kind":"W","ret":8.59,"eq":3.4727},{"rule":"small","day":"2026-09-22","next":"2026-09-23","name":"네오사피엔스","n":2,"value":434607704700.0,"entry":30750.0,"kind":"l","ret":-10.3,"eq":3.115},{"rule":"small","day":"2026-09-23","next":"2026-09-28","name":"와이즈플래닛컴퍼니","n":1,"value":1004626426500.0,"entry":46300.0,"kind":"l","ret":-10.3,"eq":2.7941},{"rule":"small","day":"2026-09-29","next":"2026-09-30","name":"글로벌테크놀로지","n":1,"value":1025456553820.0,"entry":18220.0,"kind":"L","ret":-21.71,"eq":2.1877},{"rule":"small","day":"2026-09-30","next":"2026-10-01","name":"덕산넵코어스","n":1,"value":930503450150.0,"entry":17980.0,"kind":"w","ret":4.0,"eq":2.2752},{"rule":"small","day":"2026-10-01","next":"2026-10-02","name":"브릴스","n":1,"value":622667111025.0,"entry":30450.0,"kind":"W","ret":7.09,"eq":2.4365},{"rule":"small","day":"2026-10-02","next":"2026-10-06","name":"브릴스","n":2,"value":428764467675.0,"entry":34000.0,"kind":"l","ret":-10.3,"eq":2.1855},{"rule":"small","day":"2026-10-15","next":"2026-10-16","name":"멜콘","n":1,"value":554839968350.0,"entry":17470.0,"kind":"W","ret":6.8,"eq":2.3341},{"rule":"small","day":"2026-10-20","next":"2026-10-21","name":"엘리스","n":1,"value":366978231150.0,"entry":61500.0,"kind":"W","ret":12.71,"eq":2.6307},{"rule":"small","day":"2026-10-22","next":"2026-10-23","name":"엠에스바이오","n":1,"value":976882005690.0,"entry":13320.0,"kind":"w","ret":4.0,"eq":2.7359},{"rule":"small","day":"2026-10-23","next":"2026-10-26","name":"디티에스","n":1,"value":703575123100.0,"entry":25000.0,"kind":"W","ret":8.5,"eq":2.9685},{"rule":"small","day":"2026-10-27","next":"2026-10-28","name":"엘리스","n":6,"value":375155124900.0,"entry":80600.0,"kind":"W","ret":6.65,"eq":3.1658},{"rule":"small","day":"2026-10-28","next":"2026-10-29","name":"멜콘","n":10,"value":416636483845.0,"entry":19210.0,"kind":"l","ret":-10.3,"eq":2.8397},{"rule":"small","day":"2026-10-29","next":"2026-10-30","name":"티앤이코리아","n":1,"value":539080473925.0,"entry":21500.0,"kind":"l","ret":-10.3,"eq":2.5473}],"stat":{"big":{"n":34,"skip":1,"win":19,"per":2.24,"total":85.0,"mdd":-26.6,"streak":2,"worst":-21.7,"winavg":9.9,"loseavg":-7.5,"idle":129,"hold":-3.67,"days":163,"money":8499363,"cost":1439301},"small":{"n":51,"skip":2,"win":39,"per":2.2,"total":154.7,"mdd":-37.1,"streak":3,"worst":-21.7,"winavg":6.2,"loseavg":-10.9,"idle":112,"hold":-2.73,"days":163,"money":15472532,"cost":3506931}},"check":{"big":{"band":[39.5,71.1],"rows":[{"label":"아무 신규주","n":2620,"win":939,"rate":35.8,"per":-0.78},{"label":"상장 30일 안","n":876,"win":323,"rate":36.9,"per":-0.42},{"label":"거래대금 1,000억 원 이상","n":135,"win":54,"rate":40.0,"per":0.17}],"half":[{"n":17,"win":8,"rate":47.1,"per":1.46},{"n":17,"win":11,"rate":64.7,"per":3.02}]},"small":{"band":[63.2,86.0],"rows":[{"label":"아무 신규주","n":2603,"win":1265,"rate":48.6,"per":-0.78},{"label":"상장 30일 안","n":860,"win":501,"rate":58.3,"per":-0.38},{"label":"거래대금 1,000억 원 이상","n":118,"win":85,"rate":72.0,"per":0.5}],"half":[{"n":25,"win":20,"rate":80.0,"per":3.49},{"n":26,"win":19,"rate":73.1,"per":0.95}]}},"from":"2026-03-04","to":"2026-10-30","today":{"day":"2026-10-30","top":{"name":"인텔리빅스","code":"A420610","value":1189537526740.0,"close":31000.0},"go":["big","small"],"second":[{"name":"크리에이츠","value":155921868560.0},{"name":"멜콘","value":73074451790.0},{"name":"티앤이코리아","value":52398511515.0}],"count":58,"missing":[]},"ahead":[{"day":"2026-11-02","name":"영광"},{"day":"2026-11-03","name":"래블업"},{"day":"2026-11-04","name":"이에스티"},{"day":"2026-11-10","name":"동원파츠"},{"day":"2026-11-12","name":"넥스아이"},{"day":"2026-12-22","name":"씨아이에스케미칼"}],"money":10000000},"stats":{"labels":["2017-11 ~ 2018","2019","2020","2021","2022","2023","2024","2025","2026"],"total":{"hold":{"mid":1988.912,"min":1978.285,"max":2012.041,"h23":1980.393,"dd":-77.2,"dd23":-77.3,"ddx":-83.6,"ddx23":-83.9,"y26":-12.1,"y26h":-12.1,"cost":1986.8},"safe":{"mid":989.462,"min":815.119,"max":1200.82,"h23":1128.3,"dd":-28.5,"dd23":-26.2,"ddx":-36.5,"ddx23":-35.1,"y26":6.2,"y26h":0.7,"cost":922.0},"bold":{"mid":22733.144,"min":8395.658,"max":47697.726,"h23":47697.726,"dd":-57.5,"dd23":-58.4,"ddx":-80.3,"ddx23":-80.4,"y26":29.7,"y26h":-21.3,"cost":16981.9},"mix":{"mid":11859.202,"min":4627.696,"max":24413.013,"h23":24413.013,"dd":-50.6,"dd23":-55.9,"ddx":-64.3,"ddx23":-63.1,"y26":18.0,"y26h":-10.3,"cost":8940.2},"tie":{"mid":5997.071,"min":3294.403,"max":9232.507,"h23":9232.507,"dd":-41.3,"dd23":-38.2,"ddx":-61.9,"ddx23":-61.8,"y26":18.5,"y26h":-10.0,"cost":4970.0}},"years":{"hold":{"mid":[-43.3,94.9,303.6,61.0,-64.9,157.5,119.8,-6.6,-12.1],"h23":[-43.0,94.2,307.6,59.4,-64.8,157.9,119.9,-6.6,-12.1]},"safe":{"mid":[10.7,61.4,100.6,46.6,-11.3,61.5,37.9,0.6,6.2],"h23":[14.6,64.3,107.4,56.5,-12.5,61.4,40.7,1.1,0.7]},"bold":{"mid":[-26.8,78.9,548.6,190.6,-36.2,230.5,97.5,22.9,29.7],"h23":[-26.1,173.6,559.3,398.4,-39.8,231.1,154.2,36.3,-21.3]},"mix":{"mid":[-7.3,69.3,327.5,116.8,-23.1,145.3,69.3,11.9,18.0],"h23":[-5.8,119.0,333.4,227.5,-26.1,146.3,97.5,18.7,-10.3]},"tie":{"mid":[-4.4,73.5,282.5,112.3,-22.4,133.4,69.1,12.6,18.5],"h23":[-3.5,117.7,285.2,189.9,-25.3,134.1,92.8,19.0,-10.0]}},"idle":1505,"alldays":2860},"hit":{"50일선 돌파":[0.209,"+54.4%","−3.6%",90],"RSI 되돌림":[0.417,"+12.1%","−8.5%",16],"되돌림 끝남":[0.359,"+6.6%","−5.3%",12],"50일선 이탈":[0.256,"+14.5%","−3.1%",94],"규칙 켜짐":[0.227,"+41.4%","−1.4%",29],"100일선 돌파":[0.317,"+17.5%","−1.9%",39],"규칙 꺼짐":[0.249,"+23.1%","−3.1%",51],"100일선 이탈":[0.324,"+19.7%","−2.7%",16]},"ipoHit":{"big":[0.559,"+9.9%","−7.5%",34],"small":[0.765,"+6.2%","−10.9%",51]}}</script>
+<script>
+"use strict";
+const seed = JSON.parse(document.getElementById("seed").textContent);
+const DAY = 86400000, RSI_N = 5, RSI_LOW = 10, RSI_HIGH = 70, SAFE_SIZE = .5, FEE = .001;
+const RECORD_FROM = Date.UTC(2026, 9, 31, 14);
+const API = "https://data-api.binance.vision/api/v3/";
+const MINUS = "−";
+const WEEK = "일월화수목금토";
+const RULE = { safe: ["안전 진입", "낙폭 우선"], bold: ["과감한 수익", "수익 우선"], big: ["크게", "+10% · " + MINUS + "6%"], small: ["짧게", "+4.3% · " + MINUS + "10%"] };
+const CUT = { big: [5e11, .10, -.06, "5,000억"], small: [3e11, .043, -.10, "3,000억"] };
+const KIND = { W: "시가 익절", w: "익절", L: "시가 손절", l: "손절", a: "한 봉에 둘 다 닿아 손절로 침", o: "안 닿아 정규장 끝 정리" };
+const VIEWS = { btc: ["btc", "대시보드"], "btc-log": ["btc", "매매 기록"], "btc-stats": ["btc", "통계"], ipo: ["ipo", "대시보드"], "ipo-log": ["ipo", "매매 기록"], "ipo-stats": ["ipo", "통계"], "ipo-next": ["ipo", "다음 거래일"] };
+const S = { view: "btc", bars: seed.bars, spot: seed.spot[0], spotAt: seed.spot[1], live: false, st: null, log: { rule: "all", year: "2019", res: "all" }, ipoLog: { rule: "all", month: "all", res: "all" } };
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const num = (x, d = 0) => Number(x).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+const signed = (x, d = 1, unit = "%") => { const v = Number(x.toFixed(d)); return (v > 0 ? "+" : v < 0 ? MINUS : "") + num(Math.abs(v), d) + unit; };
+const tone = x => x > 0 ? "up" : x < 0 ? "down" : "";
+const usd = x => "$" + num(Math.round(x));
+const pad = n => String(n).padStart(2, "0");
+const kst = ms => new Date(ms + 9 * 3600000);
+const when = ms => { const t = kst(ms); return `${t.getUTCMonth() + 1}/${t.getUTCDate()} ${pad(t.getUTCHours())}:${pad(t.getUTCMinutes())}`; };
+const clock = ms => { const t = kst(ms); return `${pad(t.getUTCHours())}:${pad(t.getUTCMinutes())}:${pad(t.getUTCSeconds())}`; };
+const md = s => `${+s.slice(5, 7)}/${+s.slice(8, 10)}`;
+const ymd = s => s.slice(2).replace(/-/g, ".");
+const weekday = s => WEEK[new Date(s + "T00:00:00Z").getUTCDay()];
+const won = v => { const e = Math.round(v / 1e8); return e >= 10000 ? `${Math.floor(e / 10000)}조 ${num(e % 10000)}억` : num(e) + "억"; };
+const nextDay = s => { let d = new Date(s + "T00:00:00Z"); do { d = new Date(+d + DAY); } while ([0, 6].includes(d.getUTCDay())); return d.toISOString().slice(0, 10); };
+
+/* 판정: candleman/signalbot.py 를 그대로 옮김 */
+function sma(c, n) {
+  const out = new Array(c.length).fill(null);
+  let s = 0;
+  c.forEach((x, i) => { s += x; if (i >= n) s -= c[i - n]; if (i >= n - 1) out[i] = s / n; });
+  return out;
+}
+const rsiOf = (au, ad) => ad > 0 ? 100 - 100 / (1 + au / ad) : 100;
+function judge(c) {
+  const ma50 = sma(c, 50), ma100 = sma(c, 100);
+  let au = 0, ad = 0, hold = false, r = null, up50 = false, up100 = false;
+  const on = [], safe = [], bold = [], ups50 = [], ups100 = [];
+  c.forEach((x, i) => {
+    const d = i ? x - c[i - 1] : 0, u = Math.max(d, 0), v = Math.max(-d, 0);
+    if (i) { au += (u - au) / RSI_N; ad += (v - ad) / RSI_N; } else { au = u; ad = v; }
+    if (i >= RSI_N - 1) {
+      r = rsiOf(au, ad);
+      if (r < RSI_LOW) hold = true;
+      else if (r > RSI_HIGH) hold = false;
+    }
+    up50 = ma50[i] !== null && x > ma50[i];
+    up100 = ma100[i] !== null && x > ma100[i];
+    on.push(up50 || hold);
+    safe.push((up50 || hold) && up100 ? SAFE_SIZE : 0);
+    bold.push(up50 || hold ? 1 : -1);
+    ups50.push(up50);
+    ups100.push(up100);
+  });
+  const sum = n => c.slice(-n).reduce((a, b) => a + b, 0);
+  return { on, safe, bold, ups50, ups100, up50, up100, hold, rsi: r, au, ad, ma50: ma50[ma50.length - 1], ma100: ma100[ma100.length - 1], sum49: sum(49), sum99: sum(99) };
+}
+function after(c, J, x) {
+  const last = c[c.length - 1];
+  const au = J.au + (Math.max(x - last, 0) - J.au) / RSI_N, ad = J.ad + (Math.max(last - x, 0) - J.ad) / RSI_N;
+  const r = rsiOf(au, ad), hold = r < RSI_LOW ? true : r > RSI_HIGH ? false : J.hold;
+  const on = x > (J.sum49 + x) / 50 || hold;
+  return [on, on && x > (J.sum99 + x) / 100];
+}
+function why(J, key, i) {
+  if (key === "bold") {
+    if (J.bold[i] > 0) return J.ups50[i] ? "50일선 돌파" : "RSI 되돌림";
+    return J.ups50[i - 1] ? "50일선 이탈" : "되돌림 끝남";
+  }
+  if (J.safe[i]) return J.ups100[i - 1] ? "규칙 켜짐" : "100일선 돌파";
+  return J.on[i] ? "100일선 이탈" : "규칙 꺼짐";
+}
+function coming(J, k, x, on) {
+  if (k === 0) {
+    if (on[0] === (J.bold[J.bold.length - 1] > 0)) return null;
+    if (on[0]) return x > (J.sum49 + x) / 50 ? "50일선 돌파" : "RSI 되돌림";
+    return J.up50 ? "50일선 이탈" : "되돌림 끝남";
+  }
+  if (on[1] === Boolean(J.safe[J.safe.length - 1])) return null;
+  if (on[1]) return J.up100 ? "규칙 켜짐" : "100일선 돌파";
+  return on[0] ? "100일선 이탈" : "규칙 꺼짐";
+}
+function bands(c, J, k) {
+  const out = [], last = c[c.length - 1];
+  for (let j = -600; j <= 600; j++) {
+    const x = last * (1 + j / 2000), on = after(c, J, x), now = [on[k], coming(J, k, x, on)], tail = out[out.length - 1];
+    if (tail && tail[2] === now[0] && tail[3] === now[1]) tail[1] = x;
+    else out.push([x, x, now[0], now[1]]);
+  }
+  return out;
+}
+function runStart(pos, i) {
+  while (i > 0 && pos[i - 1] === pos[i]) i--;
+  return i;
+}
+function turn(pos, o, c, ends) {
+  const i = c.length - 1, s = runStart(pos, i), entry = s < i ? o[s + 1] : c[i];
+  const out = { w: pos[i], fresh: i > 0 && s === i, from: ends[s], entry, gain: pos[i] * (c[i] / entry - 1), prev: null, closed: null };
+  if (out.fresh) {
+    const p = runStart(pos, i - 1);
+    out.prev = pos[i - 1];
+    out.closed = pos[i - 1] * (c[i] / o[p + 1] - 1);
+  }
+  return out;
+}
+function record(pos, c, i0) {
+  let w = pos[i0], px = c[i0], eq = 1 - FEE * Math.abs(w), n = 0, win = 0;
+  for (let i = i0 + 1; i < c.length; i++) {
+    if (pos[i] === w) continue;
+    const r = w * (c[i] / px - 1);
+    if (w) { n++; win += r > 2 * FEE * Math.abs(w) ? 1 : 0; }
+    eq *= (1 + r) * (1 - FEE * Math.abs(pos[i] - w));
+    w = pos[i];
+    px = c[i];
+  }
+  return { n, win, ret: eq * (1 + w * (c[c.length - 1] / px - 1)) - 1 };
+}
+function sinceRows(pos, c, ends, i0) {
+  const rows = [];
+  let w = pos[i0], px = c[i0], at = ends[i0];
+  for (let i = i0 + 1; i < c.length; i++) {
+    if (pos[i] === w) continue;
+    if (w) rows.push({ w, from: at, to: ends[i], entry: px, exit: c[i], ret: (w * (c[i] / px - 1) - 2 * FEE * Math.abs(w)) * 100 });
+    w = pos[i];
+    px = c[i];
+    at = ends[i];
+  }
+  return rows;
+}
+function readBars(bars) {
+  const ends = bars.map(b => b[0]), o = bars.map(b => b[1]), c = bars.map(b => b[2]), J = judge(c), i = c.length - 1;
+  const st = { end: ends[i], next_end: ends[i] + DAY, close: c[i], ma50: J.ma50, ma100: J.ma100, rsi: J.rsi, up50: J.up50, up100: J.up100, hold: J.hold, on: J.on[i] };
+  const i0 = ends.findIndex(e => e >= RECORD_FROM);
+  [["bold", 0], ["safe", 1]].forEach(([key, k]) => {
+    const t = turn(J[key], o, c, ends);
+    t.bands = bands(c, J, k);
+    t.why = t.fresh ? why(J, key, i) : null;
+    t.since = i0 >= 0 ? record(J[key], c, i0) : { n: 0, win: 0, ret: 0 };
+    t.rows = i0 >= 0 ? sinceRows(J[key], c, ends, i0).map(r => Object.assign(r, { rule: key })) : [];
+    st[key] = t;
+  });
+  return st;
+}
+const odds = name => `적중 ${Math.round(seed.hit[name][0] * 100)}%`;
+function bandText(rs, onWord, offWord) {
+  const word = r => (r[2] ? onWord : offWord) + (r[3] ? ` (${odds(r[3])})` : "");
+  if (rs.length === 1) return `지금 종가 ±30% 안에서는 ${word(rs[0])}`;
+  return rs.map((r, i) => i === 0 ? `${usd(rs[1][0])} 아래 = ${word(r)}` : i === rs.length - 1 ? `${usd(r[0])} 위 = ${word(r)}` : `${usd(r[0])} ~ ${usd(rs[i + 1][0])} = ${word(r)}`).join(" · ");
+}
+
+/* 공용 조각 */
+const pct1 = x => signed(x * 100, 1);
+const sinceText = s => `${s.n}건 마감 · 적중 ${s.win}건 · 누적 ${pct1(s.ret)}`;
+const tests = key => seed.trades.filter(t => t.done && t.to < "2026-10-31" && (!key || t.rule === key));
+function tally(list) {
+  const hit = list.filter(t => t.ret > 0), miss = list.filter(t => t.ret <= 0);
+  const mean = a => a.length ? a.reduce((s, t) => s + t.ret, 0) / a.length : 0;
+  return { n: list.length, hit: hit.length, miss: miss.length, rate: list.length ? hit.length / list.length * 100 : 0, per: mean(list), up: mean(hit), dn: mean(miss) };
+}
+const tallyHtml = T => `<div class="tally">
+  <div><span>마감</span><strong>${num(T.n)}건</strong></div>
+  <div><span>적중</span><strong class="up">${num(T.hit)}건</strong></div>
+  <div><span>빗나감</span><strong class="down">${num(T.miss)}건</strong></div>
+  <div><span>승률</span><strong>${T.n ? T.rate.toFixed(1) + "%" : "없음"}</strong></div>
+  <div><span>적중 평균</span><strong class="up">${signed(T.up, 1)}</strong></div>
+  <div><span>빗나감 평균</span><strong class="down">${signed(T.dn, 1)}</strong></div>
+</div>`;
+const choiceCard = (key, c) => `<article class="rule ${key === "big" ? "big-rule" : key}">
+  <div class="rule-head"><span class="dot"></span><h3>${RULE[key][0]}</h3><span class="pill">${RULE[key][1]}</span></div>
+  <div class="choice"><span class="state ${c.cls}">${c.tag}</span><strong>${c.head}</strong></div>
+  <p class="line">${c.why}</p>
+</article>`;
+const seg = (id, now, items) => `<div class="seg" id="${id}">${items.map(([v, t]) => `<button data-set="${id}:${v}" aria-pressed="${v === now}">${t}</button>`).join("")}</div>`;
+
+/* BTC 대시보드 */
+function safeChoice(st) {
+  const x = st.safe;
+  if (x.fresh && x.w) return { cls: "in", tag: "진입 신호", head: "자금 50% 현물 롱", why: `다음 봉 시가 · ${x.why} · ${odds(x.why)}` };
+  if (x.fresh) return { cls: "out", tag: "청산 신호", head: "현물 전부 정리 → 현금", why: `이번 구간 ${pct1(x.closed)} · ${x.why} · ${odds(x.why)}` };
+  if (x.w) return { cls: "", tag: "유지", head: "자금 50% 현물 롱 유지", why: `${when(x.from)} 진입 ${usd(x.entry)} · 자금 대비 <span data-gain="safe"></span>` };
+  return { cls: "", tag: "쉼", head: "오늘은 쉽니다", why: "현금 · " + (st.on ? "규칙은 켜졌지만 종가가 100일선 아래" : "규칙 꺼짐 (종가가 50일선 아래)") };
+}
+function boldChoice(st) {
+  const x = st.bold;
+  if (x.fresh && x.w > 0) return { cls: "in", tag: "진입 신호", head: "선물 숏 청산 → 현물 롱", why: `다음 봉 시가 · 이번 숏 구간 ${pct1(x.closed)} · ${x.why} · ${odds(x.why)}` };
+  if (x.fresh) return { cls: "out", tag: "청산 신호", head: "현물 청산 → 선물 숏 1배", why: `다음 봉 시가 · 이번 롱 구간 ${pct1(x.closed)} · ${x.why} · ${odds(x.why)}` };
+  return { cls: "", tag: "유지", head: (x.w > 0 ? "현물 롱" : "선물 숏 1배") + " 유지", why: `${when(x.from)} 진입 ${usd(x.entry)} · 지금 <span data-gain="bold"></span>` };
+}
+function ruler(st) {
+  const edges = st.safe.bands.concat(st.bold.bands).flatMap(b => [b[0], b[1]]);
+  const inner = [...new Set(st.safe.bands.slice(1).concat(st.bold.bands.slice(1)).map(b => Math.round(b[0])))].sort((a, b) => a - b);
+  const pts = inner.concat(S.spot);
+  const lo = Math.max(Math.min(...edges), Math.min(...pts) * .97), hi = Math.min(Math.max(...edges), Math.max(...pts) * 1.03);
+  const at = x => (x - lo) / (hi - lo) * 100, room = window.innerWidth < 640 ? 18 : 8;
+  S.scale = { lo, hi };
+  const track = (key, name, on, off) => {
+    const parts = [];
+    st[key].bands.forEach(b => {
+      const tail = parts[parts.length - 1];
+      if (tail && tail.on === b[2]) tail.to = b[1];
+      else parts.push({ on: b[2], from: b[0], to: b[1] });
+    });
+    const shown = parts.filter(p => p.to > lo && p.from < hi);
+    return `<div class="r-row" data-name="${name}"><div class="r-track">${shown.map(p => {
+      const w = at(Math.min(p.to, hi)) - at(Math.max(p.from, lo));
+      const [cls, word] = p.on ? on : off;
+      return `<div class="r-seg ${cls}" style="flex:${w.toFixed(2)} 1 0">${w > room ? word : ""}</div>`;
+    }).join("")}</div></div>`;
+  };
+  return `<div class="r-body">
+    <div class="r-now" id="r-now"></div><div class="r-now-label" id="r-label"></div>
+    ${track("safe", "안전", ["long", "롱 50%"], ["", "현금"])}
+    ${track("bold", "과감", ["long", "현물 롱"], ["short", "숏 1배"])}
+    <div class="r-ticks">${inner.map(x => `<span style="left:${at(x).toFixed(2)}%">${usd(x)}</span>`).join("")}</div>
+  </div>`;
+}
+function btcCard(key) {
+  const t = seed.stats.total[key], T = tally(tests(key).filter(x => x.from >= "2019"));
+  const idle = key === "safe" ? seed.stats.idle : 0;
+  return `<article class="rule ${key}">
+    <div class="rule-head"><span class="dot"></span><h3>${RULE[key][0]}</h3><span class="pill">${RULE[key][1]}</span></div>
+    <div class="big up">${signed(t.mid, 0)}</div>
+    <p class="line">판정 시각 24개의 가운데 값</p>
+    <table class="mini"><thead><tr><th></th><th>수익</th><th>최대 낙폭</th><th>2026년</th></tr></thead><tbody>
+      <tr><td>24개 가운데 값</td><td class="${tone(t.mid)}">${signed(t.mid, 0)}</td><td class="down">${signed(t.dd, 1)}</td><td class="${tone(t.y26)}">${signed(t.y26, 1)}</td></tr>
+      <tr><td>실제 봇(밤 11시)</td><td class="${tone(t.h23)}">${signed(t.h23, 0)}</td><td class="down">${signed(t.dd23, 1)}</td><td class="${tone(t.y26h)}">${signed(t.y26h, 1)}</td></tr>
+    </tbody></table>
+    <p class="line">실제 봇 ${num(T.n)}건 마감 · 적중 ${T.hit}건 (${Math.round(T.rate)}%) · 빗나감 ${T.miss}건</p>
+    <p class="line">건당 평균 ${signed(T.per, 2)} · 쉰 날 ${num(idle)}일</p>
+  </article>`;
+}
+function viewBtc() {
+  const st = S.st;
+  const side = (name, ma, up) => `${name}(${usd(ma)}) ${up ? "위" : "아래"}`;
+  return `<div class="two">
+    <section class="panel" aria-label="현재가">
+      <div class="panel-head"><span class="label">BTC/USDT 현재가</span><span class="pill" id="px-state"></span></div>
+      <div class="big" id="px"></div>
+      <p class="line" id="px-sub"></p>
+      <p class="line warn" id="px-note" hidden></p>
+    </section>
+    <section class="panel" aria-label="다음 판정">
+      <div class="panel-head"><span class="label">다음 판정</span><span class="pill">밤 11시 일봉 마감</span></div>
+      <div class="big">${when(st.next_end)}</div>
+      <p class="line" id="eta"></p>
+      <p class="note">10/31 23:00 판정부터의 실전 기록<br>안전 ${sinceText(st.safe.since)}<br>과감 ${sinceText(st.bold.since)}</p>
+    </section>
+  </div>
+  <section class="panel">
+    <div class="panel-head"><h2>봇의 선택</h2><span class="pill">${when(st.end)} 마감 → ${when(st.next_end)}</span></div>
+    <p class="line">종가 <b>${usd(st.close)}</b> · RSI(5) ${st.rsi.toFixed(1)}${st.hold ? " · RSI 되돌림 켜짐" : ""} · 종가가 ${side("50일선", st.ma50, st.up50)} · ${side("100일선", st.ma100, st.up100)}</p>
+    <div class="two">${choiceCard("safe", safeChoice(st))}${choiceCard("bold", boldChoice(st))}</div>
+    <h3 class="minor">${when(st.next_end)} 판정 · 종가에 따라</h3>
+    ${ruler(st)}
+    <p class="line"><span class="dot safe"></span>안전 · ${bandText(st.safe.bands, "자금 50% 현물 롱", "현금")}</p>
+    <p class="line"><span class="dot bold"></span>과감 · ${bandText(st.bold.bands, "현물 롱", "선물 숏 1배")}</p>
+    <p class="note">경계 값은 지금까지의 종가로 계산했어요. 판정은 마감 종가로만 내고 장중에는 바뀌지 않아요.</p>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>규칙 성적</h2><span class="pill">2019-01 ~ 2026-10 시험 · 사후 값</span></div>
+    <div class="two">${btcCard("safe")}${btcCard("bold")}</div>
+    <p class="note">가운데 값은 판정 시각을 0시 ~ 23시로 바꿔 24번 잰 값의 가운데예요. 실제 봇은 밤 11시에만 판정해서 수익도 2026년 값도 달라요. 건수 · 적중은 실제 봇 값이고 매매 기록과 같아요. 실제 봇의 수익 값은 24개 중 위쪽이라 기대치로 보면 안 돼요.</p>
+  </section>`;
+}
+
+/* BTC 매매 기록 */
+const sideName = (rule, w) => rule === "safe" ? "현물 롱 50%" : w > 0 ? "현물 롱" : "선물 숏 1배";
+const when2 = ms => { const t = kst(ms); return `${String(t.getUTCFullYear()).slice(2)}.${pad(t.getUTCMonth() + 1)}.${pad(t.getUTCDate())}`; };
+const YEARS = [["2019", "2019-01 ~ (규칙 성적과 같은 기간)"], ["all", "전체 (2017-11 ~)"]].concat([2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019].map(y => ["y" + y, y + "년"]), [["y2018", "2017-11 ~ 2018"]]);
+function matchYear(t, y) {
+  if (y === "all") return true;
+  if (y === "2019") return t.from >= "2019";
+  if (y === "y2018") return t.from < "2019";
+  return t.from.startsWith(y.slice(1));
+}
+function btcLogBody() {
+  const f = S.log;
+  const list = tests().filter(t => (f.rule === "all" || t.rule === f.rule) && matchYear(t, f.year));
+  const T = tally(list);
+  const shown = list.filter(t => f.res === "all" || (f.res === "hit") === (t.ret > 0)).reverse();
+  const rows = shown.map(t => `<tr>
+    <td class="c-rule"><span class="dot ${t.rule}"></span>${t.rule === "safe" ? "안전" : "과감"} · ${sideName(t.rule, t.w)}</td>
+    <td class="c-date">${ymd(t.from)} → ${ymd(t.to)} <span class="days">${t.days}일</span></td>
+    <td class="c-px num">${usd(t.entry)} → ${usd(t.exit)}</td>
+    <td class="c-ret num ${tone(t.ret)}">${signed(t.ret, 1)}</td>
+    <td class="c-res"><span class="chip ${t.ret > 0 ? "hit" : "miss"}">${t.ret > 0 ? "적중" : "빗나감"}</span></td>
+  </tr>`).join("");
+  return `${tallyHtml(T)}
+    <p class="line">건당 평균 <b>${signed(T.per, 2)}</b> · 승률보다 이긴 건의 크기가 수익을 만들어요.</p>
+    ${shown.length ? `<table class="log"><thead><tr><th>규칙 · 방향</th><th>진입 → 청산</th><th class="num">진입가 → 청산가</th><th class="num">수익률</th><th>결과</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="line">이 조건에 맞는 거래가 없어요.</p>`}`;
+}
+function viewBtcLog() {
+  const st = S.st;
+  const open = ["safe", "bold"].filter(k => st[k].w).map(k => `<tr>
+    <td class="c-rule"><span class="dot ${k}"></span>${k === "safe" ? "안전" : "과감"} · ${sideName(k, st[k].w)}</td>
+    <td class="c-date">${when(st[k].from)} → 지금</td>
+    <td class="c-px num">${usd(st[k].entry)} → <span data-now></span></td>
+    <td class="c-ret num" data-gain-cell="${k}"></td>
+    <td class="c-res"><span class="chip">진행 중</span></td>
+  </tr>`).join("");
+  const real = st.safe.rows.concat(st.bold.rows).sort((a, b) => b.to - a.to).map(t => `<tr>
+    <td class="c-rule"><span class="dot ${t.rule}"></span>${t.rule === "safe" ? "안전" : "과감"} · ${sideName(t.rule, t.w)}</td>
+    <td class="c-date">${when(t.from)} → ${when(t.to)}</td>
+    <td class="c-px num">${usd(t.entry)} → ${usd(t.exit)}</td>
+    <td class="c-ret num ${tone(t.ret)}">${signed(t.ret, 1)}</td>
+    <td class="c-res"><span class="chip ${t.ret > 0 ? "hit" : "miss"}">${t.ret > 0 ? "적중" : "빗나감"}</span></td>
+  </tr>`).join("");
+  return `<section class="panel">
+    <div class="panel-head"><h2>지금 잡고 있는 자리</h2><span class="pill">${when(st.end)} 판정 기준</span></div>
+    ${open ? `<table class="log"><tbody>${open}</tbody></table>` : `<p class="line">두 규칙 모두 현금이에요.</p>`}
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>실전 기록</h2><span class="pill">10/31 23:00 판정부터</span></div>
+    <p class="line">안전 ${sinceText(st.safe.since)} · 과감 ${sinceText(st.bold.since)}</p>
+    ${real ? `<table class="log"><tbody>${real}</tbody></table>` : `<p class="line">아직 마감된 거래가 없어요. 신호로 잡은 자리가 청산되면 여기에 적중 · 빗나감으로 쌓여요.</p>`}
+    <p class="note">누적은 10/31 23:00 종가부터 잰 값이라, 10/24 진입가로 잰 위의 수익률과 달라요. 봇과 같이 왕복 0.2%를 빼고 숏 펀딩은 넣지 않았어요.</p>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>시험 기록</h2><span class="pill">밤 11시 판정 · 사후 값</span></div>
+    <div class="controls">
+      ${seg("log-rule", S.log.rule, [["all", "전체"], ["safe", "안전"], ["bold", "과감"]])}
+      ${seg("log-res", S.log.res, [["all", "전체"], ["hit", "적중"], ["miss", "빗나감"]])}
+      <select id="log-year" aria-label="기간">${YEARS.map(([v, t]) => `<option value="${v}"${v === S.log.year ? " selected" : ""}>${t}</option>`).join("")}</select>
+    </div>
+    <div id="log-body" style="display:grid;gap:12px;min-width:0">${btcLogBody()}</div>
+    <p class="note">적중 = 진입 뒤 다음 신호에서 비용을 빼고 플러스로 닫힘. 빗나감 = 마이너스로 닫힘. 수익률은 자금 대비이고 왕복 0.2%와 숏 펀딩을 뺀 값이에요. 안전은 자금의 50%만 들어가서 가격 변화의 절반쯤이에요. 진입 · 청산은 그날 밤 11시 봉 시가예요. 승률은 같은 청산 자리까지 아무 날이나 들어간 쪽이 더 높아요(과감 52% · 안전 57%).</p>
+  </section>`;
+}
+
+/* BTC 통계 */
+const pair = (a, b, d = 1) => `<td><b class="${tone(a)}">${signed(a, d)}</b><span class="${tone(b)}">${signed(b, d)}</span></td>`;
+function viewBtcStats() {
+  const T = seed.stats.total, Y = seed.stats.years, L = seed.stats.labels;
+  const names = [["hold", "보유"], ["safe", "안전 진입"], ["bold", "과감한 수익"], ["mix", "50:50 따로 굴림"], ["tie", "50:50 전환마다 리밸런싱"]];
+  const row = ([k, n]) => `<tr${k === "mix" ? ' class="me"' : ""}><td>${n}</td>${pair(T[k].mid, T[k].h23, 0)}${pair(T[k].dd, T[k].dd23)}${pair(T[k].ddx, T[k].ddx23)}</tr>`;
+  const year = (y, i) => `<tr><td>${y}</td>${["hold", "safe", "bold", "mix"].map(k => pair(Y[k].mid[i], Y[k].h23[i])).join("")}</tr>`;
+  return `<section class="panel">
+    <div class="panel-head"><h2>두 값을 나란히</h2><span class="pill">위 = 24개 가운데 값 · 아래 = 실제 봇(밤 11시)</span></div>
+    <p class="line">일봉 마감 시각을 0시 ~ 23시로 바꿔 24번 재면 값이 시각마다 달라요. 위 숫자는 그 24개의 가운데 값이고, 아래 숫자는 실제 봇이 쓰는 밤 11시 판정 값이에요.</p>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>2019-01 ~ 2026-10</th><th>수익</th><th>최대 낙폭</th><th>2017-11부터 낙폭</th></tr></thead><tbody>${names.map(row).join("")}</tbody></table></div>
+    <p class="note">보유와 같은 비용 · 같은 체결로 쟀어요. 50:50 따로 굴림은 2019-01에 자금을 한 번 나누고 그대로 둔 값이에요.</p>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>해마다</h2><span class="pill">위 = 24개 가운데 값 · 아래 = 실제 봇(밤 11시)</span></div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>기간</th><th>보유</th><th>안전</th><th>과감</th><th>50:50</th></tr></thead><tbody>${L.map(year).join("")}</tbody></table></div>
+    <p class="note">해마다 값은 그 해 첫날 자금을 다시 나눠서 시작한 값이에요. 2026년 50:50은 가운데 값 ${signed(Y.mix.mid[8], 1)}, 실제 봇 ${signed(Y.mix.h23[8], 1)}예요.</p>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>자산 곡선</h2><span class="pill">2019-01 시작 = 1배 · 24개 가운데 값</span></div>
+    <div class="legend"><span><i style="background:var(--bold)"></i>과감한 수익</span><span><i style="background:var(--hold)"></i>보유</span><span><i style="background:var(--safe)"></i>안전 진입</span></div>
+    <div class="chart" id="chart-btc"></div>
+  </section>`;
+}
+
+/* 신규 추격 */
+function ipoChoice(key) {
+  const t = seed.ipo.today, C = CUT[key], N = RULE[key][0];
+  if (!t) return { cls: "", tag: "쉼", head: "오늘은 쉽니다", why: "판정 자료를 받지 못했어요." };
+  if (t.go.includes(key)) {
+    const c = t.top.close;
+    const s = seed.ipo.stat[key];
+    return { cls: "in", tag: "진입 신호", head: `${esc(t.top.name)} ${num(c)}원`, why: `${md(nextDay(t.day))} 익절 ${num(Math.round(c * (1 + C[1])))}원 · 손절 ${num(Math.round(c * (1 + C[2])))}원 · 적중 ${Math.round(s.win / s.n * 100)}%` };
+  }
+  return { cls: "", tag: "쉼", head: "오늘은 쉽니다", why: `거래대금 1위가 ${C[3]} 원에 못 미쳐요.` };
+}
+function ipoCard(key) {
+  const s = seed.ipo.stat[key], I = seed.ipo;
+  return `<article class="rule ${key === "big" ? "big-rule" : key}">
+    <div class="rule-head"><span class="dot"></span><h3>${RULE[key][0]}</h3><span class="pill">${RULE[key][1]}</span></div>
+    <div class="big up">${signed(s.total, 0)}</div>
+    <p class="line">${s.n}건 · 적중 ${s.win}건 (${Math.round(s.win / s.n * 100)}%) · 빗나감 ${s.n - s.win}건</p>
+    <p class="line">건당 평균 ${signed(s.per, 2)} · 최대 낙폭 ${signed(s.mdd, 1)} · 쉰 날 ${s.idle}일</p>
+    <p class="line">이기면 평균 ${signed(s.winavg, 1)} · 지면 평균 ${signed(s.loseavg, 1)} · 거래대금 ${CUT[key][3]} 원 이상</p>
+  </article>`;
+}
+function viewIpo() {
+  const I = seed.ipo, s = I.stat, t = I.today;
+  const money = s.big.money + s.small.money, cost = s.big.cost + s.small.cost, n = s.big.n + s.small.n;
+  const next = t ? nextDay(t.day) : null;
+  const names = next ? I.ahead.filter(a => a.day === next).map(a => esc(a.name)) : [];
+  const stale = next && Date.now() >= Date.parse(`${next}T15:36:00+09:00`);   // 다음 거래일 판정이 나면 받아 둔 자료는 옛것
+  return `${stale ? `<p class="line warn">이 자료는 ${md(t.day)} 장 마감 기준이에요. 그 뒤 판정은 여기 없고 디스코드 시그널에만 있어요.</p>` : ""}<div class="two">
+    <section class="panel" aria-label="수익금">
+      <div class="panel-head"><span class="label">수익금</span><span class="pill">시험 값 · 사후 값</span></div>
+      <div class="big ${tone(money)}">${money > 0 ? "+" : ""}${num(money)}원</div>
+      <p class="line">${n}건 마감 · 비용 ${num(cost)}원 차감</p>
+      <p class="note">규칙마다 ${num(I.money / 10000)}만 원으로 시작해 매번 전액을 굴렸다고 가정한 값이에요. 실제 돈이 아니에요.</p>
+    </section>
+    <section class="panel" aria-label="다음 거래일">
+      <div class="panel-head"><span class="label">다음 거래일</span>${next ? `<span class="pill">${md(next)}(${weekday(next)})</span>` : ""}</div>
+      <div class="big">${names.length ? names.join(" · ") : "상장 없음"}</div>
+      <p class="line">그날 상장 예정 · 15:36 이후 거래대금 1위를 판정해요.</p>
+    </section>
+  </div>
+  <section class="panel">
+    <div class="panel-head"><h2>봇의 선택</h2>${t ? `<span class="pill">${md(t.day)} 장 마감 데이터 → ${md(next)}</span>` : ""}</div>
+    ${t ? `<p class="line">거래대금 1위 <b>${esc(t.top.name)}</b> ${won(t.top.value)} 원 · 코스닥 신규주 ${t.count}종목 중 · 종가 ${num(t.top.close)}원</p>` : ""}
+    <div class="two">${choiceCard("big", ipoChoice("big"))}${choiceCard("small", ipoChoice("small"))}</div>
+    ${t && t.go.length ? `<p class="note">매수 자리는 ${md(t.day)} 장 마감 때였어요. 결과는 ${md(next)} 장 마감 뒤에 5분봉 순서로 판정해요.</p>` : ""}
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>규칙 성적</h2><span class="pill">${I.from.slice(0, 7)} ~ ${I.to.slice(0, 7)} 시험 · ${s.big.days}거래일 · 사후 값</span></div>
+    <div class="two">${ipoCard("big")}${ipoCard("small")}</div>
+    <p class="note">코스닥 신규상장(스팩 제외 · 상장 1년 안) 중 그날 거래대금 1위를 정규장 종가에 사서 다음 거래일에 정리해요. 왕복 0.3%를 뺐고, 한 봉에 익절 · 손절이 둘 다 닿으면 손절로 쳤어요. 표본이 작고 규칙을 공개 글에서 추론한 값이라 그쪽 봇의 성적과는 달라요.</p>
+  </section>`;
+}
+function ipoLogBody() {
+  const f = S.ipoLog;
+  const list = seed.ipo.trades.filter(t => (f.rule === "all" || t.rule === f.rule) && (f.month === "all" || t.day.startsWith(f.month)));
+  const T = tally(list);
+  const shown = list.filter(t => f.res === "all" || (f.res === "hit") === (t.ret > 0)).slice().reverse();
+  const rows = shown.map(t => `<tr>
+    <td class="c-rule"><span class="dot ${t.rule === "big" ? "bold" : "safe"}"></span>${RULE[t.rule][0]} · ${esc(t.name)}</td>
+    <td class="c-date">${ymd(t.day)} → ${ymd(t.next)} <span class="days">상장 ${t.n}일차</span></td>
+    <td class="c-px num">${won(t.value)} · ${num(t.entry)}원</td>
+    <td class="c-kind">${KIND[t.kind]}</td>
+    <td class="c-ret num ${tone(t.ret)}">${signed(t.ret, 1)}</td>
+    <td class="c-res"><span class="chip ${t.ret > 0 ? "hit" : "miss"}">${t.ret > 0 ? "적중" : "빗나감"}</span></td>
+  </tr>`).join("");
+  return `${tallyHtml(T)}
+    <p class="line">건당 평균 <b>${signed(T.per, 2)}</b></p>
+    ${shown.length ? `<table class="log"><thead><tr><th>규칙 · 종목</th><th>진입 → 다음 거래일</th><th class="num">거래대금 · 종가</th><th>결과 내용</th><th class="num">수익률</th><th>결과</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="line">이 조건에 맞는 거래가 없어요.</p>`}`;
+}
+function viewIpoLog() {
+  const t = seed.ipo.today, I = seed.ipo;
+  const months = [...new Set(I.trades.map(x => x.day.slice(0, 7)))].sort().reverse();
+  return `<section class="panel">
+    <div class="panel-head"><h2>판정 기다리는 자리</h2>${t ? `<span class="pill">${md(t.day)} 장 마감 → ${md(nextDay(t.day))}</span>` : ""}</div>
+    ${t && t.go.length ? `<table class="log"><tbody>${t.go.map(k => `<tr>
+      <td class="c-rule"><span class="dot ${k === "big" ? "bold" : "safe"}"></span>${RULE[k][0]} · ${esc(t.top.name)}</td>
+      <td class="c-date">${ymd(t.day)} → ${ymd(nextDay(t.day))}</td>
+      <td class="c-px num">${won(t.top.value)} · ${num(t.top.close)}원</td>
+      <td class="c-res"><span class="chip">판정 대기</span></td></tr>`).join("")}</tbody></table>` : `<p class="line">기다리는 자리가 없어요.</p>`}
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>시험 기록</h2><span class="pill">${I.from.slice(0, 7)} ~ ${I.to.slice(0, 7)} · 사후 값</span></div>
+    <div class="controls">
+      ${seg("ilog-rule", S.ipoLog.rule, [["all", "전체"], ["big", "크게"], ["small", "짧게"]])}
+      ${seg("ilog-res", S.ipoLog.res, [["all", "전체"], ["hit", "적중"], ["miss", "빗나감"]])}
+      <select id="ilog-month" aria-label="달"><option value="all">전체 기간</option>${months.map(m => `<option value="${m}"${m === S.ipoLog.month ? " selected" : ""}>${m}</option>`).join("")}</select>
+    </div>
+    <div id="ilog-body" style="display:grid;gap:12px;min-width:0">${ipoLogBody()}</div>
+    <p class="note">적중 = 다음 거래일 청산이 왕복 0.3%를 뺀 뒤 플러스. 빗나감 = 마이너스. 두 규칙이 같은 종목을 고른 날은 한 줄씩 따로 적었어요. 시가가 손절선 아래면 더 잃어요(시험 최악 ${signed(I.stat.big.worst, 1)}).</p>
+  </section>`;
+}
+function viewIpoStats() {
+  const I = seed.ipo, months = [...new Set(I.trades.map(x => x.day.slice(0, 7)))].sort();
+  const cell = (m, key) => {
+    const a = I.trades.filter(t => t.rule === key && t.day.startsWith(m));
+    if (!a.length) return `<td><b>없음</b></td>`;
+    const T = tally(a), eq = a.reduce((e, t) => e * (1 + t.ret / 100), 1) - 1;
+    return `<td><b>${T.n}건 · 적중 ${T.hit}</b><span class="${tone(eq)}">누적 ${signed(eq * 100, 0)}</span></td>`;
+  };
+  const line = x => `<td><b>${x.rate.toFixed(1)}%</b><span class="${tone(x.per)}">${signed(x.per, 2)} · ${num(x.n)}건</span></td>`;
+  const self = k => ({ rate: I.stat[k].win / I.stat[k].n * 100, per: I.stat[k].per, n: I.stat[k].n });
+  const C = I.check;
+  return `<section class="panel">
+    <div class="panel-head"><h2>달마다</h2><span class="pill">${I.from.slice(0, 7)} ~ ${I.to.slice(0, 7)}</span></div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>달</th><th>크게</th><th>짧게</th></tr></thead><tbody>${months.map(m => `<tr><td>${m}</td>${cell(m, "big")}${cell(m, "small")}</tr>`).join("")}</tbody></table></div>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>규칙과 다른 자리 비교</h2><span class="pill">같은 익절 · 손절 · 같은 비용</span></div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>자리</th><th>크게 승률 · 건당</th><th>짧게 승률 · 건당</th></tr></thead><tbody>
+      <tr class="me"><td>규칙 (거래대금 1위)</td>${line(self("big"))}${line(self("small"))}</tr>
+      ${C.big.rows.map((r, i) => `<tr><td>${r.label}</td>${line(r)}${line(C.small.rows[i])}</tr>`).join("")}
+      <tr><td>규칙 · 앞 절반</td>${line(C.big.half[0])}${line(C.small.half[0])}</tr>
+      <tr><td>규칙 · 뒤 절반</td>${line(C.big.half[1])}${line(C.small.half[1])}</tr>
+    </tbody></table></div>
+    <p class="note">앞뒤는 2026-07-01로 나눴어요. 적중의 95% 구간은 크게 ${Math.round(C.big.band[0])} ~ ${Math.round(C.big.band[1])}% · 짧게 ${Math.round(C.small.band[0])} ~ ${Math.round(C.small.band[1])}%예요. 익절 · 손절 없이 같은 종목을 다음 날 종가까지 그냥 들면 건당 크게 ${signed(I.stat.big.hold, 2)} · 짧게 ${signed(I.stat.small.hold, 2)}예요.</p>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>누적 곡선</h2><span class="pill">시작 = 1배 · 매번 전액 복리 · 사후 값</span></div>
+    <div class="legend"><span><i style="background:var(--safe)"></i>짧게</span><span><i style="background:var(--bold)"></i>크게</span></div>
+    <div class="chart" id="chart-ipo"></div>
+  </section>`;
+}
+function viewIpoNext() {
+  const I = seed.ipo, t = I.today, next = t ? nextDay(t.day) : null;
+  return `<section class="panel">
+    <div class="panel-head"><h2>상장 일정</h2><span class="pill">예정일은 바뀔 수 있어요</span></div>
+    ${I.ahead.length ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>예정일</th><th>회사</th><th>다음 거래일</th></tr></thead><tbody>${I.ahead.map(a => `<tr><td>${md(a.day)}(${weekday(a.day)})</td><td>${esc(a.name)}</td><td>${a.day === next ? "그날 상장" : ""}</td></tr>`).join("")}</tbody></table></div>` : `<p class="line">앞으로의 상장 일정을 받지 못했어요.</p>`}
+    <p class="note">KRX KIND 공모기업현황 기준이고 스팩은 뺐어요.</p>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>장 마감 뒤 봇이 하는 일</h2><span class="pill">평일 15:36 ~ 20:00</span></div>
+    <ol class="steps">
+      <li>코스닥 신규상장 중 스팩을 빼고 상장 1년 안의 종목을 거래대금 순으로 세워요.</li>
+      <li>1위가 5,000억 원 이상이면 크게, 3,000억 원 이상이면 짧게 진입 신호를 디스코드로 보내요. 아니면 쉬어요.</li>
+      <li>신호가 나면 종가 근처에 사고, 다음 거래일에 익절 · 손절 중 먼저 닿는 쪽으로 나와요. 둘 다 안 닿으면 정규장 끝에 정리해요.</li>
+      <li>다음 거래일 장 마감 뒤 5분봉 순서로 적중 · 빗나감을 적어요.</li>
+    </ol>
+  </section>`;
+}
+
+/* 차트 */
+function lineChart(box, cfg) {
+  if (!box) return;
+  const W = Math.max(280, box.clientWidth || 640), H = W < 480 ? 230 : 280, m = { l: 42, r: W < 480 ? 76 : 104, t: 12, b: 24 };
+  const pos = cfg.pos, n = pos.length, x0 = pos[0], x1 = pos[n - 1], f = cfg.log ? Math.log10 : (v => v);
+  const lo = cfg.lo, hi = cfg.hi;
+  const X = p => m.l + (W - m.l - m.r) * (p - x0) / (x1 - x0);
+  const Y = v => H - m.b - (H - m.t - m.b) * (f(v) - f(lo)) / (f(hi) - f(lo));
+  const grid = cfg.ticks.map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" style="stroke:var(--line);stroke-width:1"></line><text x="${m.l - 8}" y="${(Y(v) + 4).toFixed(1)}" text-anchor="end" style="fill:var(--ink-3);font-size:11px">${cfg.tickText(v)}</text>`).join("");
+  let last = -1e9;
+  const xs = cfg.xticks.filter(([p]) => { if (X(p) - last < 36) return false; last = X(p); return true; }).map(([p, t]) => `<text x="${X(p).toFixed(1)}" y="${H - 6}" text-anchor="middle" style="fill:var(--ink-3);font-size:11px">${t}</text>`).join("");
+  const ends = cfg.series.map(s => ({ s, y: Y(s.y[n - 1]) })).sort((a, b) => a.y - b.y);
+  ends.forEach((e, i) => { e.ty = i ? Math.max(e.y, ends[i - 1].ty + 15) : e.y; });
+  const trace = s => s.y.map((v, i) => !i ? `M${X(pos[0]).toFixed(1)} ${Y(v).toFixed(1)}` : cfg.step ? `H${X(pos[i]).toFixed(1)}V${Y(v).toFixed(1)}` : `L${X(pos[i]).toFixed(1)} ${Y(v).toFixed(1)}`).join("");
+  const lines = cfg.series.map(s => `<path d="${trace(s)}" style="fill:none;stroke:${s.color};stroke-width:2;stroke-linejoin:round;stroke-linecap:round"></path>
+    <circle cx="${X(x1).toFixed(1)}" cy="${Y(s.y[n - 1]).toFixed(1)}" r="4" style="fill:${s.color};stroke:var(--panel);stroke-width:2"></circle>`).join("");
+  const labels = ends.map(e => `<text x="${X(x1) + 9}" y="${(e.ty + 4).toFixed(1)}" style="fill:var(--ink-2);font-size:11px">${e.s.name} ${cfg.valText(e.s.y[n - 1])}</text>`).join("");
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${cfg.label}">${grid}${xs}${lines}${labels}<line class="hair" y1="${m.t}" y2="${H - m.b}" style="stroke:var(--ink-3);stroke-width:1;display:none"></line><rect class="hit" x="${m.l}" y="${m.t}" width="${W - m.l - m.r}" height="${H - m.t - m.b}" style="fill:transparent"></rect></svg><div class="tip" hidden></div>`;
+  const hair = box.querySelector(".hair"), tip = box.querySelector(".tip"), hit = box.querySelector(".hit");
+  const move = e => {
+    const r = box.getBoundingClientRect(), px = (e.clientX - r.left) * W / r.width, aim = x0 + (px - m.l) / (W - m.l - m.r) * (x1 - x0);
+    let i = 0;
+    pos.forEach((p, k) => { if (Math.abs(p - aim) < Math.abs(pos[i] - aim)) i = k; });
+    hair.setAttribute("x1", X(pos[i])); hair.setAttribute("x2", X(pos[i])); hair.style.display = "";
+    tip.hidden = false;
+    tip.innerHTML = `<strong>${cfg.x[i]}</strong>` + cfg.series.map(s => `<div>${s.name} ${cfg.valText(s.y[i])}</div>`).join("");
+    const left = X(pos[i]) * r.width / W;
+    tip.style.left = (left > r.width / 2 ? left - tip.offsetWidth - 10 : left + 10) + "px";
+  };
+  const out = () => { hair.style.display = "none"; tip.hidden = true; };
+  hit.addEventListener("pointermove", move);
+  hit.addEventListener("pointerdown", move);
+  hit.addEventListener("pointerleave", out);
+}
+function drawCharts() {
+  if ($("chart-btc")) {
+    const c = seed.curve, all = c.flatMap(r => r.slice(1));
+    const ticks = [1, 10, 100, 1000].filter(v => v <= Math.max(...all) * 1.2);
+    lineChart($("chart-btc"), {
+      label: "2019년부터 과감한 수익 · 보유 · 안전 진입의 자산 곡선", log: true, x: c.map(r => r[0]), pos: c.map((_, i) => i), lo: Math.min(.5, Math.min(...all)), hi: Math.max(...all) * 1.15, ticks,
+      tickText: v => num(v) + "배", valText: v => signed((v - 1) * 100, 0),
+      xticks: c.map((r, i) => [i, r[0]]).filter(([, t]) => t.endsWith("-01")).map(([i, t]) => [i, t.slice(0, 4)]),
+      series: [{ name: "과감", color: "var(--bold)", y: c.map(r => r[3]) }, { name: "보유", color: "var(--hold)", y: c.map(r => r[1]) }, { name: "안전", color: "var(--safe)", y: c.map(r => r[2]) }]
+    });
+  }
+  if ($("chart-ipo")) {
+    const I = seed.ipo, T = I.trades, days = [I.from, ...new Set(T.map(t => t.next).sort())];
+    const dayNo = d => (Date.parse(d + "T00:00:00Z") - Date.parse(I.from + "T00:00:00Z")) / DAY;
+    const walk = key => { let e = 1; return days.map(d => { const a = T.find(t => t.rule === key && t.next === d); if (a) e = a.eq; return e; }); };
+    const big = walk("big"), small = walk("small"), all = big.concat(small);
+    const hi = Math.max(...all) * 1.06, lo = Math.min(...all) * .94;
+    const ticks = [.5, 1, 1.5, 2, 2.5, 3, 3.5].filter(v => v >= lo && v <= hi);
+    const months = [...new Set(days.map(d => d.slice(0, 7)))];
+    lineChart($("chart-ipo"), {
+      label: "신규 추격 두 규칙의 누적 수익 곡선", log: false, step: true, x: days.map(md), pos: days.map(dayNo), lo, hi, ticks,
+      tickText: v => v.toFixed(1) + "배", valText: v => signed((v - 1) * 100, 0),
+      xticks: months.map(m => [Math.max(0, dayNo(m + "-01")), +m.slice(5) + "월"]),
+      series: [{ name: "짧게", color: "var(--safe)", y: small }, { name: "크게", color: "var(--bold)", y: big }]
+    });
+  }
+}
+
+/* 화면 전환 · 시세 */
+const RENDER = { btc: viewBtc, "btc-log": viewBtcLog, "btc-stats": viewBtcStats, ipo: viewIpo, "ipo-log": viewIpoLog, "ipo-stats": viewIpoStats, "ipo-next": viewIpoNext };
+function render() {
+  const market = VIEWS[S.view][0];
+  $("m-btc").setAttribute("aria-selected", market === "btc");
+  $("m-ipo").setAttribute("aria-selected", market === "ipo");
+  $("sub").innerHTML = Object.keys(VIEWS).filter(k => VIEWS[k][0] === market).map(k => `<button role="tab" data-go="${k}" aria-selected="${k === S.view}">${VIEWS[k][1]}</button>`).join("");
+  $("view").innerHTML = RENDER[S.view]();
+  drawCharts();
+  tick();
+}
+function go(v) {
+  if (!VIEWS[v] || v === S.view) return;
+  S.view = v;
+  try { history.replaceState(null, "", "#" + v); } catch (e) { /* 주소를 못 바꿔도 화면은 바뀜 */ }
+  render();
+  window.scrollTo(0, 0);
+}
+function tick() {
+  const now = Date.now(), st = S.st, px = S.spot;
+  const gain = k => st[k].w * (px / st[k].entry - 1) * 100;
+  const fill = (id, t) => { const el = $(id); if (el) el.textContent = t; };
+  fill("px", "$" + num(px, 2));
+  const change = (px / st.close - 1) * 100, sub = $("px-sub");
+  if (sub) sub.innerHTML = `${when(st.end)} 종가 대비 <span class="${tone(change)}">${signed(change, 2)}</span> · ${clock(S.spotAt)} 기준`;
+  const pill = $("px-state");
+  if (pill) { pill.textContent = S.live ? "실시간" : "게시 시점 값"; pill.className = "pill " + (S.live ? "live" : "old"); }
+  const note = $("px-note");
+  if (note) {
+    const late = now >= st.next_end;
+    note.hidden = S.live;
+    note.textContent = late ? `이 값은 ${when(S.spotAt)}에 받아 둔 값이고 그 뒤 판정이 지났어요. 최신 판정은 디스코드 시그널에서 보세요.` : `이 주소에서는 바깥 시세를 받을 수 없어서 ${when(S.spotAt)}에 받아 둔 값을 보여 줘요.`;
+  }
+  const left = st.next_end - now;
+  if (left > 0) fill("eta", `${Math.floor(left / 3600000)}시간 ${Math.floor(left % 3600000 / 60000)}분 남음`);
+  else fill("eta", S.live ? "판정을 받는 중이에요" : "판정 시각이 지났어요");
+  document.querySelectorAll("[data-gain]").forEach(el => { const v = gain(el.dataset.gain); el.textContent = signed(v, 1); el.className = tone(v); });
+  document.querySelectorAll("[data-gain-cell]").forEach(el => { const v = gain(el.dataset.gainCell); el.textContent = signed(v, 1); el.className = "c-ret num " + tone(v); });
+  document.querySelectorAll("[data-now]").forEach(el => { el.textContent = usd(px); });
+  const mark = $("r-now"), label = $("r-label");
+  if (mark && S.scale) {
+    const x = Math.max(0, Math.min(100, (px - S.scale.lo) / (S.scale.hi - S.scale.lo) * 100));
+    mark.style.left = x + "%";
+    label.style.left = x + "%";
+    label.style.transform = x < 16 ? "none" : x > 84 ? "translateX(-100%)" : "translateX(-50%)";
+    label.textContent = "지금 " + usd(px);
+  }
+}
+async function pullPrice() {
+  try {
+    const r = await fetch(API + "ticker/price?symbol=BTCUSDT", { cache: "no-store" });
+    if (!r.ok) throw new Error("price");
+    const j = await r.json();
+    S.spot = Number(j.price);
+    S.spotAt = Date.now();
+    S.live = true;
+  } catch (e) {
+    S.live = false;
+  }
+  tick();
+  if (S.live && Date.now() >= S.st.next_end + 30000) pullBars();
+  setTimeout(pullPrice, S.live ? 5000 : 60000);
+}
+async function pullBars() {
+  try {
+    const r = await fetch(API + "klines?symbol=BTCUSDT&interval=1d&timeZone=10&limit=500", { cache: "no-store" });
+    if (!r.ok) throw new Error("bars");
+    const now = Date.now(), bars = (await r.json()).filter(x => Number(x[6]) < now).map(x => [Number(x[6]) + 1, Number(x[1]), Number(x[4])]);
+    if (bars.length < 110) return;
+    const changed = bars[bars.length - 1][0] !== S.bars[S.bars.length - 1][0];
+    S.bars = bars;
+    if (changed || !S.barsLive) { S.st = readBars(bars); S.barsLive = true; render(); }
+  } catch (e) { /* 받아 둔 값으로 계속 */ }
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.go) go(b.dataset.go);
+  if (b.dataset.set) {
+    const [id, v] = b.dataset.set.split(":"), [group, field] = id.split("-");
+    (group === "log" ? S.log : S.ipoLog)[field] = v;
+    b.parentElement.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b));
+    if (group === "log") $("log-body").innerHTML = btcLogBody();
+    else $("ilog-body").innerHTML = ipoLogBody();
+  }
+});
+document.addEventListener("change", e => {
+  if (e.target.id === "log-year") { S.log.year = e.target.value; $("log-body").innerHTML = btcLogBody(); }
+  if (e.target.id === "ilog-month") { S.ipoLog.month = e.target.value; $("ilog-body").innerHTML = ipoLogBody(); }
+});
+let wait = 0;
+window.addEventListener("resize", () => { cancelAnimationFrame(wait); wait = requestAnimationFrame(drawCharts); });
+window.addEventListener("hashchange", () => go(location.hash.slice(1)));
+if (VIEWS[location.hash.slice(1)]) S.view = location.hash.slice(1);
+S.st = readBars(S.bars);
+$("built").textContent = "자료 " + seed.built.slice(5).replace("-", "/").replace(/^0/, "");
+render();
+pullPrice();
+pullBars();
+setInterval(tick, 20000);
+</script>
+
+</body>
+</html>
