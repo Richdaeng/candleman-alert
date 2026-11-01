@@ -2,6 +2,7 @@
 
 웹후크 주소는 기록에 남기지 않습니다(채널 이름만 남김). @everyone 같은 호출이 글에 섞여도 울리지 않게 막아 둡니다.
 글쓴이 이름 · 사진은 보내지 않고 디스코드의 웹후크 설정을 그대로 씁니다(지금은 '매매일지봇' · 캔들 사진, 디스코드에서 바꾸면 바로 반영).
+#봇-시그널만 글마다 사진을 함께 보냅니다(저장소의 assets/signalbot.png · 이름은 웹후크 설정 그대로).
 
 알림 채널(ping — 기본 #실시간-매매 · #현재포지션 · #일일-요약 · #일일-경제-브리핑)의 글은 머리 줄 끝에 @everyone 을 붙여 모두에게 울립니다
 (10/26 댕이: 서버 기본 알림을 '@mentions만'으로 바꾸고 매매 · 포지션 알림만 울리게). 폰 알림에 내용이 먼저 보이게 끝에 붙이고,
@@ -19,6 +20,7 @@ from . import cards
 USER_AGENT = "DiscordBot (https://github.com/Richdaeng/candleman-alert, 1.0)"
 PING = "@everyone"
 RING_BY_POST = ("signal",)         # 글마다 울릴지 정하는 채널
+AVATAR = {"signal": "https://raw.githubusercontent.com/Richdaeng/candleman-alert/stable/assets/signalbot.png"}
 
 
 def with_ping(text):
@@ -57,6 +59,8 @@ class Discord:
     def _post(self, channel, text, embeds=None):
         url = self.urls.get(channel) or self.urls.get("trade")
         payload = {"allowed_mentions": {"parse": ["everyone"] if channel in self.ping or channel in RING_BY_POST else []}}
+        if channel in AVATAR:
+            payload["avatar_url"] = AVATAR[channel]
         if text:
             payload["content"] = text[:2000]
         if embeds:

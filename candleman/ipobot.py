@@ -34,11 +34,15 @@ KEEP_DAYS = 7                      # 결과를 못 읽은 신호를 이만큼 �
 COST = 0.003                       # 왕복 비용
 RULES = (("big", "크게", 5e11, 0.10, -0.06), ("small", "짧게", 3e11, 0.043, -0.10))
 # 시험 값(2026-03-04 ~ 10-30 · 163거래일 · 정규장 종가 진입 · 5분봉 순서 · 왕복 0.3% · 하루 1건 복리 · 표본이 작은 사후 값)
-BIG = {"title": "신규 추격 크게", "tag": "+10% · −6%", "color": signalbot.PURPLE, "total": "+85%", "span": "2026-03 ~ 10 시험 · 사후 값",
+BIG = {"title": "🔥 신규 추격 크게", "tag": "+10% · −6%", "color": signalbot.PURPLE, "total": "+85%", "span": "2026-03 ~ 10 시험 · 사후 값",
        "n": 34, "win": 19, "per": "+2.24%", "mdd": "−26.6%", "idle": "129일"}
-SMALL = {"title": "신규 추격 짧게", "tag": "+4.3% · −10%", "color": signalbot.GREEN, "total": "+155%", "span": "2026-03 ~ 10 시험 · 사후 값",
+SMALL = {"title": "⚡ 신규 추격 짧게", "tag": "+4.3% · −10%", "color": signalbot.GREEN, "total": "+155%", "span": "2026-03 ~ 10 시험 · 사후 값",
          "n": 51, "win": 39, "per": "+2.20%", "mdd": "−37.1%", "idle": "112일"}
-FOOTER = ("투자 권유 아님 · 주문 안 냄 · 시험 값은 표본이 작고 규칙을 추론한 자료의 사후 값 · 같은 종목을 다음 날 종가까지 그냥 들면 건당 크게 −3.67% · 짧게 −2.73% · "
+# 적중(같은 기간 · 다음 거래일 청산이 비용 뒤 플러스): 규칙 키 → (적중 확률, 이긴 평균, 진 평균, 지난 건수)
+HIT = {"big": (.559, "+9.9%", "−7.5%", 34), "small": (.765, "+6.2%", "−10.9%", 51)}
+FOOTER = ("투자 권유 아님 · 주문 안 냄 · 시험 값은 표본이 작고 규칙을 추론한 자료의 사후 값\n"
+          "적중 = 다음 거래일 청산이 비용 뒤 플러스 · 95% 구간 크게 40 ~ 71% · 짧게 63 ~ 86% · 같은 익절 · 손절을 아무 신규주에 걸면 36% · 49%\n"
+          "같은 종목을 다음 날 종가까지 그냥 들면 건당 크게 −3.67% · 짧게 −2.73%\n"
           "시가가 손절선 아래면 더 잃음(시험 최악 −21.7%) · 진입가가 다르면 익절 · 손절가도 체결가 기준으로 다시 계산")
 
 
@@ -270,26 +274,29 @@ def compose(today, rows, missing, plans, results, rec):
     lines = []
     if top:
         tag = "오늘 상장" if top["listed"] == today.isoformat() else "%s 상장" % short_day(top["listed"])
-        lines.append("거래대금 1위: %s %s%s · 종가 %s · %s" % (top["name"], won(top["value"]), " (실시간 값 · NXT 포함)" if top.get("live") else "", price(top["close"]), tag))
+        lines.append("🏆 거래대금 1위: %s %s%s · 종가 %s · %s" % (top["name"], won(top["value"]), " (실시간 값 · NXT 포함)" if top.get("live") else "", price(top["close"]), tag))
     for key, ko, need, tp, sl in RULES:
+        mark = "🔥" if key == "big" else "⚡"
         if any(r[0] == key for r in go):
-            lines.append("**%s** — 🟢 진입 신호: 종가 근처 매수 → %d/%d 익절 %s(%s) · 손절 %s(%s) · 안 닿으면 정규장 끝에 정리" % (
-                ko, nxt.month, nxt.day, price(top["close"] * (1 + tp)), signalbot.pct1(tp), price(top["close"] * (1 + sl)), signalbot.pct1(sl)))
+            p, up, down, n = HIT[key]
+            lines.append("%s **%s** — 🟢 **진입 신호** · 종가 근처 매수 → %d/%d 익절 %s(%s) · 손절 %s(%s) · 안 닿으면 정규장 끝에 정리\n🎯 적중 확률 **%d%%** · 이기면 평균 %s · 지면 평균 %s · 지난 %d건" % (
+                mark, ko, nxt.month, nxt.day, price(top["close"] * (1 + tp)), signalbot.pct1(tp), price(top["close"] * (1 + sl)), signalbot.pct1(sl), round(p * 100), up, down, n))
         elif top:
-            lines.append("**%s** — 오늘은 쉼 · 1위 거래대금이 %s 미달" % (ko, won(need)))
+            lines.append("%s **%s** — 💤 오늘은 쉼 · 1위 거래대금이 %s 미달" % (mark, ko, won(need)))
         else:
-            lines.append("**%s** — 오늘은 쉼 · 오늘 거래된 신규주 없음" % ko)
+            lines.append("%s **%s** — 💤 오늘은 쉼 · 오늘 거래된 신규주 없음" % (mark, ko))
     if results:
-        lines.append("지난 신호: " + " · ".join(results))
+        lines.append("📒 지난 신호: " + " · ".join(results))
     if missing:
         lines.append("⚠️ 오늘 상장 예정 %s은 목록에서 못 찾아 판정에서 빠짐" % " · ".join(missing))
     done = {r["name"] for r in rows}
     soon = [(d, n) for d, n in plans if n not in done and today.isoformat() < d <= (today + dt.timedelta(days=PLAN_DAYS)).isoformat()][:4]
     if soon:
-        lines.append("다음 상장(예정): " + " · ".join("%s %s" % (short_day(d), n) for d, n in soon))
-    panel = {"title": "봇의 선택 · " + when, "color": signalbot.PANEL, "description": "\n".join(lines), "footer": {"text": FOOTER}}
+        lines.append("🗓️ 다음 상장(예정): " + " · ".join("%s %s" % (short_day(d), n) for d, n in soon))
+    panel = {"title": "🤖 봇의 선택 · " + when, "color": signalbot.GREEN if go else signalbot.PANEL, "description": "\n".join(lines), "footer": {"text": FOOTER}}
     since = lambda r: "%d건 · %d승 · %s" % (r["n"], r["win"], signalbot.pct1(r["eq"] - 1))
-    text = "🔔 신규 추격 진입 신호 · %s · %s" % (top["name"], when) if go else "📡 신규 추격 · %s · 오늘은 쉼" % when
+    odds = " · ".join("%s 적중 %d%%" % (r[1], round(HIT[r[0]][0] * 100)) for r in go)
+    text = "🔔 신규 추격 진입 신호 · %s · %s · %s" % (top["name"], when, odds) if go else "📡 신규 추격 · %s · 오늘은 쉼" % when
     return {"content": text, "embeds": [signalbot.rule_card(BIG, since(rec["big"])), signalbot.rule_card(SMALL, since(rec["small"])), panel], "ring": bool(go)}
 
 

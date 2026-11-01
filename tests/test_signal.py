@@ -37,6 +37,11 @@ def state_of(closes, n=None):
     return signalbot.read(rows, n or int(rows[-1][6]) + 2)
 
 
+def panel_of(msg):
+    """봇의 선택 카드의 글 전체."""
+    return "\n".join(f["name"] + "\n" + f["value"] for f in msg["embeds"][2]["fields"])
+
+
 class RuleTest(unittest.TestCase):
     def test_closed_end_is_11pm_kst(self):
         t = dt.datetime(2026, 11, 1, 18, 17, tzinfo=fmt.KST)
@@ -99,8 +104,47 @@ class RuleTest(unittest.TestCase):
         rs = signalbot.bands(c, J, 0)
         self.assertEqual([r[2] for r in rs], [True, False, True])               # RSI 과매도 · 그 위 · 50일선 위
         text = signalbot.band_text(rs, "현물 롱", "선물 숏 1배")
-        self.assertRegex(text, r"^\$\d+ 아래 = 현물 롱 · \$\d+ ~ \$\d+ = 선물 숏 1배 · \$\d+ 위 = 현물 롱$")
+        self.assertRegex(text, r"^\$\d+ 아래 = 현물 롱 · \$\d+ ~ \$\d+ = 선물 숏 1배 \(적중 26%\) · \$\d+ 위 = 현물 롱$")    # 신호가 나는 칸에만
         self.assertEqual(signalbot.band_text([[1, 2, True]], "롱", "숏"), "지금 종가 ±30% 안에서는 롱")
+
+    def test_why_names_the_path(self):
+        c = [100.0] * 300 + [101.0]                                              # 평평하다 오름: 50일선 위로 켜짐 · 전날 100일선 아래
+        J = signalbot.judge(c)
+        self.assertEqual(signalbot.why(J, "bold", len(c) - 1), "50일선 돌파")
+        self.assertEqual(signalbot.why(J, "safe", len(c) - 1), "100일선 돌파")
+        c = [100.0 + (1 if i % 2 else -1) for i in range(302)] + [96.0]          # 위아래로 오가다 이평 아래로 (RSI 는 10 위)
+        J = signalbot.judge(c)
+        self.assertEqual(J["bold"][-1], -1.0)
+        self.assertEqual(signalbot.why(J, "bold", len(c) - 1), "50일선 이탈")
+        self.assertEqual(signalbot.why(J, "safe", len(c) - 1), "규칙 꺼짐")
+
+    def test_rsi_paths(self):
+        c = [100.0] * 60 + [100.0 - 2 * i for i in range(1, 9)]                  # 50일선 아래인데 RSI 과매도로 켜짐
+        J = signalbot.judge(c)
+        i = next(k for k in range(1, len(c)) if J["bold"][k] > 0 and J["bold"][k - 1] < 0)
+        self.assertEqual(signalbot.why(J, "bold", i), "RSI 되돌림")
+        c = c + [c[-1] + 2 * k for k in range(1, 12)]                            # 많이 되돌림: 70 위에서 꺼지는데 아직 50일선 아래
+        J = signalbot.judge(c)
+        i = next(k for k in range(61, len(c)) if J["bold"][k] < 0 and J["bold"][k - 1] > 0)
+        self.assertEqual(signalbot.why(J, "bold", i), "되돌림 끝남")
+
+    def test_coming_matches_the_real_next_signal(self):
+        for shift in range(0, 40, 3):
+            c = [100 + 30 * (((i + shift) * 7) % 13 - 6) / 6 + i * 0.1 for i in range(160)]
+            J = signalbot.judge(c)
+            for j in range(-30, 31):
+                x = c[-1] * (1 + j / 100)
+                on = signalbot.after(c, J, x)
+                N = signalbot.judge(c + [x])
+                for k, key in ((0, "bold"), (1, "safe")):
+                    want = signalbot.why(N, key, len(c)) if N[key][-1] != N[key][-2] else None
+                    self.assertEqual(signalbot.coming(J, k, x, on), want, (shift, j, key))
+
+    def test_every_path_has_a_probability(self):
+        self.assertEqual(sorted(signalbot.HIT), sorted(["50일선 돌파", "RSI 되돌림", "되돌림 끝남", "50일선 이탈", "규칙 켜짐", "100일선 돌파", "규칙 꺼짐", "100일선 이탈"]))
+        for p, up, down, n in signalbot.HIT.values():
+            self.assertTrue(0 < p < 1 and up.startswith("+") and down.startswith("−") and n >= 10)
+        self.assertEqual(signalbot.chance("규칙 켜짐"), "🎯 적중 확률 **23%** · 규칙 켜짐 · 이기면 평균 +41.4% · 지면 평균 −1.4% · 지난 29건")
 
     def test_record_counts_closed_runs_after_fees(self):
         pos = [1.0, 1.0, -1.0, -1.0, 1.0]
@@ -123,41 +167,59 @@ class ComposeTest(unittest.TestCase):
         self.assertFalse(msg["ring"])
         self.assertEqual(msg["content"], "📡 BTC 판정 · 오늘은 자리 그대로")
         self.assertEqual(len(msg["embeds"]), 3)
-        self.assertEqual(msg["embeds"][0]["title"], "안전 진입 · 낙폭 우선")
-        self.assertEqual(msg["embeds"][1]["title"], "과감한 수익 · 수익 우선")
+        self.assertEqual((msg["embeds"][0]["title"], msg["embeds"][0]["author"]["name"]), ("🛡️ 안전 진입", "낙폭 우선"))
+        self.assertEqual((msg["embeds"][1]["title"], msg["embeds"][1]["author"]["name"]), ("🚀 과감한 수익", "수익 우선"))
         self.assertTrue(msg["embeds"][0]["description"].startswith("## +989%\n"))
         self.assertEqual([f["value"] for f in msg["embeds"][1]["fields"]][:5], ["169건", "50건 (30%)", "+5.55%", "−57.5%", "0일"])
         self.assertIn("봇의 선택", msg["embeds"][2]["title"])
-        self.assertIn("유지: 자금 50% 현물 롱", msg["embeds"][2]["description"])
-        self.assertIn("유지: 현물 롱", msg["embeds"][2]["description"])
+        self.assertIn("📌 유지 · 자금 50% 현물 롱", panel_of(msg))
+        self.assertIn("📌 유지 · 현물 롱", panel_of(msg))
+        self.assertNotIn("적중 확률", panel_of(msg))
+        self.assertEqual(msg["embeds"][2]["color"], signalbot.PANEL)
         self.assertIn("주문 안 냄", msg["embeds"][2]["footer"]["text"])
+        self.assertIn("아무 날 진입이 더 높음", msg["embeds"][2]["footer"]["text"])
 
     def test_turn_day_rings_with_entry_and_exit_words(self):
         c = [100.0 + (1 if i % 2 else -1) for i in range(302)]                   # 위아래로 오가다 이평 위에서
         msg = signalbot.compose(state_of(c + [96.0]))                            # 이평 아래로 (RSI 는 10 위라 되돌림 안 켜짐)
         self.assertTrue(msg["ring"])
-        panel = msg["embeds"][2]["description"]
-        self.assertIn("청산 신호: 현물 전부 정리", panel)
-        self.assertIn("청산 신호: 현물 청산 → 선물 숏 1배", panel)
-        self.assertIn("안전 진입 청산", msg["content"])
-        self.assertIn("선물 숏 전환", msg["content"])
+        panel = panel_of(msg)
+        self.assertIn("🔴 **청산 신호** · 현물 전부 정리", panel)
+        self.assertIn("🔴 **청산 신호** · 현물 청산 → 선물 숏 1배", panel)
+        self.assertEqual(panel.count("🎯 적중 확률"), 2)
+        self.assertEqual(msg["content"], "🔔 BTC 신호 · 🛡️ 안전 청산 적중 25% · 🚀 과감 선물 숏 전환 적중 26%")
+        self.assertEqual(msg["embeds"][2]["color"], signalbot.cards.RED)
 
     def test_big_drop_keeps_bold_long_by_rsi(self):
         up = [100.0 + i for i in range(420)]
         msg = signalbot.compose(state_of(up + [up[-1] * 0.6]))                   # 하루 −40%: RSI 가 10 아래로 → 과감은 되돌림으로 유지 · 안전은 100일선 아래라 청산
-        panel = msg["embeds"][2]["description"]
-        self.assertIn("청산 신호: 현물 전부 정리", panel)
-        self.assertIn("유지: 현물 롱", panel)
+        panel = panel_of(msg)
+        self.assertIn("🔴 **청산 신호** · 현물 전부 정리", panel)
+        self.assertIn("📌 유지 · 현물 롱", panel)
         self.assertIn("RSI 되돌림 켜짐", panel)
 
     def test_entry_day_rings(self):
         msg = signalbot.compose(state_of([100.0] * 300 + [101.0]))                # 평평하다(꺼짐) 오름: 50일선 · 100일선 위로
         self.assertTrue(msg["ring"])
-        panel = msg["embeds"][2]["description"]
-        self.assertIn("진입 신호: 자금 50% 현물 롱", panel)
-        self.assertIn("진입 신호: 선물 숏 청산 → 현물 롱", panel)
-        self.assertIn("안전 진입 진입", msg["content"])
-        self.assertIn("현물 롱 전환", msg["content"])
+        panel = panel_of(msg)
+        self.assertIn("🟢 **진입 신호** · 자금 50% 현물 롱", panel)
+        self.assertIn("🟢 **진입 신호** · 선물 숏 청산 → 현물 롱", panel)
+        self.assertIn("🎯 적중 확률 **32%** · 100일선 돌파", panel)
+        self.assertIn("🎯 적중 확률 **21%** · 50일선 돌파", panel)
+        self.assertEqual(msg["content"], "🔔 BTC 신호 · 🛡️ 안전 진입 적중 32% · 🚀 과감 현물 롱 전환 적중 21%")
+        self.assertEqual(msg["embeds"][2]["color"], signalbot.GREEN)
+
+    def test_post_fits_discord_limits(self):
+        for closes in ([100.0] * 300 + [101.0], [100.0 + (1 if i % 2 else -1) for i in range(302)] + [96.0], [100.0 + i for i in range(420)]):
+            msg = signalbot.compose(state_of(closes))
+            total = 0
+            for e in msg["embeds"]:
+                total += len(e.get("title", "")) + len(e.get("description", "")) + len(e.get("footer", {}).get("text", "")) + len(e.get("author", {}).get("name", ""))
+                for f in e["fields"] if "fields" in e else []:
+                    self.assertLessEqual(len(f["value"]), 1024)
+                    total += len(f["name"]) + len(f["value"])
+            self.assertLess(total, 6000)
+            self.assertLessEqual(len(msg["embeds"][2]["footer"]["text"]), 2048)
 
     def test_turn_gain_uses_next_open(self):
         pos = [0.0, 0.5, 0.5, 0.5]
@@ -392,16 +454,19 @@ class IpoComposeTest(unittest.TestCase):
         rows = [{"name": "인텔리빅스", "code": "A1", "listed": "2026-10-30", "close": 31000.0, "value": 1.19e12}]
         msg = ipobot.compose(self.today, rows, [], [("2026-11-02", "영광"), ("2026-11-03", "래블업")], [], ipobot.fresh())
         self.assertTrue(msg["ring"])
-        self.assertEqual(msg["content"], "🔔 신규 추격 진입 신호 · 인텔리빅스 · 10/30 장 마감 → 11/2")
+        self.assertEqual(msg["content"], "🔔 신규 추격 진입 신호 · 인텔리빅스 · 10/30 장 마감 → 11/2 · 크게 적중 56% · 짧게 적중 76%")
         panel = msg["embeds"][2]["description"]
         self.assertIn("거래대금 1위: 인텔리빅스 1조 1,900억 · 종가 31,000원 · 오늘 상장", panel)
         self.assertIn("11/2 익절 34,100원(+10.0%) · 손절 29,140원(−6.0%)", panel)
         self.assertIn("익절 32,333원(+4.3%) · 손절 27,900원(−10.0%)", panel)
         self.assertIn("다음 상장(예정): 11/2 영광 · 11/3 래블업", panel)
+        self.assertIn("🎯 적중 확률 **56%** · 이기면 평균 +9.9% · 지면 평균 −7.5% · 지난 34건", panel)
+        self.assertIn("🎯 적중 확률 **76%** · 이기면 평균 +6.2% · 지면 평균 −10.9% · 지난 51건", panel)
+        self.assertEqual(msg["embeds"][2]["color"], signalbot.GREEN)
         msg = ipobot.compose(self.today, rows, [], [("2026-10-31", "인텔리빅스"), ("2026-11-02", "영광")], [], ipobot.fresh())
         self.assertIn("다음 상장(예정): 11/2 영광", msg["embeds"][2]["description"])   # 예정일보다 먼저 상장한 종목은 뺌
         self.assertNotIn("10/31", msg["embeds"][2]["description"])
-        self.assertEqual(msg["embeds"][0]["title"], "신규 추격 크게 · +10% · −6%")
+        self.assertEqual((msg["embeds"][0]["title"], msg["embeds"][0]["author"]["name"]), ("🔥 신규 추격 크게", "+10% · −6%"))
 
     def test_quiet_when_top_is_small(self):
         rows = [{"name": "가", "code": "A1", "listed": "2026-10-01", "close": 1000.0, "value": 1.559e11}]
@@ -410,15 +475,15 @@ class IpoComposeTest(unittest.TestCase):
         self.assertEqual(msg["content"], "📡 신규 추격 · 10/30 장 마감 → 11/2 · 오늘은 쉼")
         self.assertNotIn("가", msg["content"])                                   # 조용한 글의 머리에는 종목명을 안 넣음
         panel = msg["embeds"][2]["description"]
-        self.assertIn("**크게** — 오늘은 쉼 · 1위 거래대금이 5,000억 미달", panel)
-        self.assertIn("**짧게** — 오늘은 쉼 · 1위 거래대금이 3,000억 미달", panel)
+        self.assertIn("**크게** — 💤 오늘은 쉼 · 1위 거래대금이 5,000억 미달", panel)
+        self.assertIn("**짧게** — 💤 오늘은 쉼 · 1위 거래대금이 3,000억 미달", panel)
         self.assertIn("지난 신호: 나 크게 손절 −6.3%", panel)
 
     def test_small_only(self):
         rows = [{"name": "가", "code": "A1", "listed": "2026-10-01", "close": 1000.0, "value": 3.5e11}]
         panel = ipobot.compose(self.today, rows, [], [], [], ipobot.fresh())["embeds"][2]["description"]
-        self.assertIn("**크게** — 오늘은 쉼", panel)
-        self.assertIn("**짧게** — 🟢 진입 신호", panel)
+        self.assertIn("**크게** — 💤 오늘은 쉼", panel)
+        self.assertIn("**짧게** — 🟢 **진입 신호**", panel)
 
     def test_no_rows(self):
         msg = ipobot.compose(self.today, [], [], [], [], ipobot.fresh())
@@ -593,6 +658,10 @@ class RingTest(unittest.TestCase):
         with mock.patch("candleman.discord.urllib.request.urlopen", fake_urlopen):
             self.d._post("signal", "🔔 BTC 신호 @everyone", [{"title": "카드"}])
         self.assertEqual(sent[0]["allowed_mentions"], {"parse": ["everyone"]})
+        self.assertTrue(sent[0]["avatar_url"].endswith("/stable/assets/signalbot.png"))
+        with mock.patch("candleman.discord.urllib.request.urlopen", fake_urlopen):
+            self.d._post("trade", "머리", [{"title": "카드"}])
+        self.assertNotIn("avatar_url", sent[1])                                  # 다른 채널은 웹후크 설정 그대로
 
 
 class CommandTest(unittest.TestCase):

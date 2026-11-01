@@ -5,6 +5,7 @@
 - 안전 진입: 규칙이 켜지고 종가가 100일선 위면 자금의 50%만 현물 롱, 아니면 현금.
 규칙 = 종가가 50일선 위이거나 RSI(5) 과매도 상태(10 아래에서 켜지고 70 위에서 꺼짐). 판정은 일봉 마감 한 번 · 다음 봉 시가에 실행 · 장중 손절 없음.
 시험 값은 카드에 고정해 두고(사후 값), 시작 뒤 기록은 시세로 그때그때 다시 계산합니다(폰이 꺼졌던 날이 있어도 틀어지지 않게).
+신호가 난 날은 왜 났는가(경로)별 적중 확률을 같이 적습니다. 값은 백테스트 표를 고정해 둔 것입니다(폰에서 다시 재지 않음).
 자리가 바뀐 날만 @everyone 으로 울립니다. 바뀌지 않은 날의 글은 조용히 올립니다.
 """
 import json
@@ -27,12 +28,17 @@ PURPLE = 10181046
 GREEN = cards.GREEN
 PANEL = cards.BLUE
 # 시험 값(2019-01 ~ 2026-10 · 판정 시각 24칸의 중앙 · 왕복 0.2% · 숏 펀딩 포함 · 낙폭은 일봉 저가 · 고가까지 · 사후 값)
-SAFE = {"title": "안전 진입", "tag": "낙폭 우선", "color": GREEN, "total": "+989%", "span": "2019-01 ~ 2026-10 시험 · 24칸 중앙 · 사후 값",
+SAFE = {"title": "🛡️ 안전 진입", "tag": "낙폭 우선", "color": GREEN, "total": "+989%", "span": "2019-01 ~ 2026-10 시험 · 24칸 중앙 · 사후 값",
         "n": 58, "win": 17, "per": "+6.22%", "mdd": "−28.5%", "idle": "1,512일"}
-BOLD = {"title": "과감한 수익", "tag": "수익 우선", "color": PURPLE, "total": "+22,733%", "span": "2019-01 ~ 2026-10 시험 · 24칸 중앙 · 사후 값",
+BOLD = {"title": "🚀 과감한 수익", "tag": "수익 우선", "color": PURPLE, "total": "+22,733%", "span": "2019-01 ~ 2026-10 시험 · 24칸 중앙 · 사후 값",
         "n": 169, "win": 50, "per": "+5.55%", "mdd": "−57.5%", "idle": "0일"}
-FOOTER = ("투자 권유 아님 · 주문 안 냄 · 시험 값은 규칙을 고른 구간의 사후 값이라 기대치가 아님 · 적중은 30%쯤 · "
-          "2017-11부터 재면 낙폭 안전 −36.5% · 과감 −80.3%, 과감은 밤 11시 칸 2018년에 21연패 −70.5% · 2026년은 안전 +6.2% · 과감 +29.7%(밤 11시 칸은 +0.7% · −21.3%)")
+# 신호별 적중(2017-11 ~ 2026-10 닫힌 신호): 경로 이름 → (적중 확률, 이긴 평균, 진 평균, 지난 건수). 확률 = 지난 승률을 건수 적은 칸일수록 전체 쪽으로 당긴 값 · 평균 = 24칸 중앙 · 건수 = 밤 11시 칸
+HIT = {"50일선 돌파": (.209, "+54.4%", "−3.6%", 90), "RSI 되돌림": (.417, "+12.1%", "−8.5%", 16), "되돌림 끝남": (.359, "+6.6%", "−5.3%", 12), "50일선 이탈": (.256, "+14.5%", "−3.1%", 94),
+       "규칙 켜짐": (.227, "+41.4%", "−1.4%", 29), "100일선 돌파": (.317, "+17.5%", "−1.9%", 39), "규칙 꺼짐": (.249, "+23.1%", "−3.1%", 51), "100일선 이탈": (.324, "+19.7%", "−2.7%", 16)}
+FOOTER = ("투자 권유 아님 · 주문 안 냄 · 시험 값은 규칙을 고른 구간의 사후 값이라 기대치가 아님\n"
+          "적중 = 이 신호로 잡은 자리가 다음 신호에서 비용 뒤 플러스로 닫힘(안전 청산은 판 값보다 싸게 다시 삼) · 승률은 아무 날 진입이 더 높음(과감 52% · 안전 57%), 돈은 이긴 건의 크기에서 나옴\n"
+          "2017-11부터 재면 낙폭 안전 −36.5% · 과감 −80.3% · 과감은 밤 11시 칸 2018년에 21연패 −70.5%\n"
+          "2026년은 안전 +6.2% · 과감 +29.7% (밤 11시 칸은 +0.7% · −21.3%)")
 
 
 def _get(url):
@@ -73,11 +79,11 @@ def rsi_of(au, ad):
 
 
 def judge(c):
-    """종가들 → 날마다의 판정. on · safe · bold[i] = i일 종가 판정(i + 1일 시가부터). 끝의 값들은 다음 판정 계산에 씀."""
+    """종가들 → 날마다의 판정. on · safe · bold[i] = i일 종가 판정(i + 1일 시가부터) · ups50 · ups100[i] = i일 종가가 그 선 위. 끝의 값들은 다음 판정 계산에 씀."""
     ma50, ma100 = sma(c, 50), sma(c, 100)
     au = ad = 0.0
     hold = False
-    on, safe, bold = [], [], []
+    on, safe, bold, ups50, ups100 = [], [], [], [], []
     r = None
     for i, x in enumerate(c):
         d = x - c[i - 1] if i else 0.0
@@ -98,7 +104,9 @@ def judge(c):
         on.append(up50 or hold)
         safe.append(SAFE_SIZE if (up50 or hold) and up100 else 0.0)
         bold.append(1.0 if up50 or hold else -1.0)
-    return {"on": on, "safe": safe, "bold": bold, "up50": up50, "up100": up100, "hold": hold, "rsi": r, "au": au, "ad": ad, "ma50": ma50[-1], "ma100": ma100[-1],
+        ups50.append(up50)
+        ups100.append(up100)
+    return {"on": on, "safe": safe, "bold": bold, "ups50": ups50, "ups100": ups100, "up50": up50, "up100": up100, "hold": hold, "rsi": r, "au": au, "ad": ad, "ma50": ma50[-1], "ma100": ma100[-1],
             "sum49": sum(c[-49:]), "sum99": sum(c[-99:])}
 
 
@@ -112,16 +120,43 @@ def after(c, J, x):
     return on, on and x > (J["sum99"] + x) / 100
 
 
+def why(J, key, i):
+    """i일 종가에 난 신호가 왜 났는가 → HIT 의 경로 이름."""
+    if key == "bold":
+        if J["bold"][i] > 0:
+            return "50일선 돌파" if J["ups50"][i] else "RSI 되돌림"
+        return "50일선 이탈" if J["ups50"][i - 1] else "되돌림 끝남"
+    if J["safe"][i]:
+        return "규칙 켜짐" if J["ups100"][i - 1] else "100일선 돌파"
+    return "100일선 이탈" if J["on"][i] else "규칙 꺼짐"
+
+
+def coming(J, k, x, on):
+    """다음 판정 종가가 x 일 때 날 신호의 경로 이름 (자리가 그대로면 None). on = after() 값. k = 0 과감 · 1 안전."""
+    if k == 0:
+        if on[0] == (J["bold"][-1] > 0):
+            return None
+        if on[0]:
+            return "50일선 돌파" if x > (J["sum49"] + x) / 50 else "RSI 되돌림"
+        return "50일선 이탈" if J["up50"] else "되돌림 끝남"
+    if on[1] == bool(J["safe"][-1]):
+        return None
+    if on[1]:
+        return "규칙 켜짐" if J["up100"] else "100일선 돌파"
+    return "100일선 이탈" if on[0] else "규칙 꺼짐"
+
+
 def bands(c, J, k):
-    """다음 판정 종가별 자리 → [[아래 끝, 위 끝, 켜짐]] (지금 종가 ±30% 를 0.05% 간격으로 봄). k = 0 과감 · 1 안전."""
+    """다음 판정 종가별 자리 → [[아래 끝, 위 끝, 켜짐, 신호 경로]] (지금 종가 ±30% 를 0.05% 간격으로 봄). k = 0 과감 · 1 안전."""
     out = []
     for j in range(-600, 601):
         x = c[-1] * (1 + j / 2000)
-        on = after(c, J, x)[k]
-        if out and out[-1][2] == on:
+        on = after(c, J, x)
+        state = [on[k], coming(J, k, x, on)]
+        if out and out[-1][2:] == state:
             out[-1][1] = x
         else:
-            out.append([x, x, on])
+            out.append([x, x] + state)
     return out
 
 
@@ -171,6 +206,7 @@ def read(rows, n):
     for key, k in (("bold", 0), ("safe", 1)):
         st[key] = turn(J[key], o, c, ends)
         st[key]["bands"] = bands(c, J, k)
+        st[key]["why"] = why(J, key, len(c) - 1) if st[key]["fresh"] else None
         st[key]["since"] = record(J[key], c, i0) if i0 is not None else {"n": 0, "win": 0, "ret": 0.0}
     return st
 
@@ -185,26 +221,30 @@ def pct1(x):
     return ("+" if v > 0 else fmt.MINUS if v < 0 else "") + "%.1f%%" % abs(v)
 
 
+def odds(name):
+    return "적중 %d%%" % round(HIT[name][0] * 100)
+
+
 def band_text(rs, on_word, off_word):
-    """[[아래, 위, 켜짐]] → '$70,000 아래 = 현금 · $70,000 위 = 자금 50% 현물 롱'."""
-    word = lambda on: on_word if on else off_word
+    """[[아래, 위, 켜짐, 경로]] → '$70,000 아래 = 현금 · $70,000 위 = 자금 50% 현물 롱 (적중 23%)'. 신호가 나는 칸에만 적중을 붙임."""
+    word = lambda r: (on_word if r[2] else off_word) + (" (%s)" % odds(r[3]) if len(r) > 3 and r[3] else "")
     if len(rs) == 1:
-        return "지금 종가 ±30%% 안에서는 %s" % word(rs[0][2])
+        return "지금 종가 ±30%% 안에서는 %s" % word(rs[0])
     out = []
-    for i, (_, _, on) in enumerate(rs):
+    for i, r in enumerate(rs):
         if i == 0:
-            out.append("%s 아래 = %s" % (_usd(rs[1][0]), word(on)))
+            out.append("%s 아래 = %s" % (_usd(rs[1][0]), word(r)))
         elif i == len(rs) - 1:
-            out.append("%s 위 = %s" % (_usd(rs[i][0]), word(on)))
+            out.append("%s 위 = %s" % (_usd(r[0]), word(r)))
         else:
-            out.append("%s ~ %s = %s" % (_usd(rs[i][0]), _usd(rs[i + 1][0]), word(on)))
+            out.append("%s ~ %s = %s" % (_usd(r[0]), _usd(rs[i + 1][0]), word(r)))
     return " · ".join(out)
 
 
 def rule_card(x, since):
-    """규칙 카드: 왼쪽 색 띠 · 큰 숫자 · 건수 · 적중 · 건당 · 낙폭 · 쉰 날 · 시작 뒤 기록."""
+    """규칙 카드: 왼쪽 색 띠 · 위에 작은 태그 · 큰 숫자 · 건수 · 적중 · 건당 · 낙폭 · 쉰 날 · 시작 뒤 기록."""
     field = lambda name, value: {"name": name, "value": value, "inline": True}
-    return {"title": "%s · %s" % (x["title"], x["tag"]), "color": x["color"], "description": "## %s\n%s" % (x["total"], x["span"]),
+    return {"author": {"name": x["tag"]}, "title": x["title"], "color": x["color"], "description": "## %s\n%s" % (x["total"], x["span"]),
             "fields": [field("건수", "{:,}건".format(x["n"])), field("적중", "%d건 (%d%%)" % (x["win"], round(x["win"] / x["n"] * 100))),
                        field("건당 평균", x["per"]), field("최대 낙폭", x["mdd"]), field("쉰 날", x["idle"]), field("시작 뒤 기록", since)]}
 
@@ -218,49 +258,62 @@ def _when(ms):
     return "%d/%d %02d:%02d" % (t.month, t.day, t.hour, t.minute)
 
 
+def chance(name):
+    """신호 밑에 붙는 적중 확률 줄."""
+    p, up, down, n = HIT[name]
+    return "🎯 적중 확률 **%d%%** · %s · 이기면 평균 %s · 지면 평균 %s · 지난 %d건" % (round(p * 100), name, up, down, n)
+
+
 def safe_line(st):
     x = st["safe"]
     if x["fresh"] and x["w"]:
-        return "🟢 진입 신호: 자금 50% 현물 롱 (다음 봉 시가 · 지금)"
+        return "🟢 **진입 신호** · 자금 50%% 현물 롱 (다음 봉 시가 · 지금)\n%s" % chance(x["why"])
     if x["fresh"]:
-        return "🔴 청산 신호: 현물 전부 정리 → 현금 · 이번 구간 %s" % pct1(x["closed"])
+        return "🔴 **청산 신호** · 현물 전부 정리 → 현금 · 이번 구간 %s\n%s" % (pct1(x["closed"]), chance(x["why"]))
     if x["w"]:
-        return "유지: 자금 50%% 현물 롱 · %s 진입 · 자금 대비 %s" % (_when(x["from"]), pct1(x["gain"]))
-    why = "규칙은 켜졌지만 종가가 100일선 아래" if st["on"] else "규칙 꺼짐 (종가가 50일선 아래)"
-    return "오늘은 쉼 · 현금 · %s" % why
+        return "📌 유지 · 자금 50%% 현물 롱 · %s 진입 · 자금 대비 %s" % (_when(x["from"]), pct1(x["gain"]))
+    off = "규칙은 켜졌지만 종가가 100일선 아래" if st["on"] else "규칙 꺼짐 (종가가 50일선 아래)"
+    return "💤 오늘은 쉼 · 현금 · %s" % off
 
 
 def bold_line(st):
     x = st["bold"]
     if x["fresh"] and x["w"] > 0:
-        return "🟢 진입 신호: 선물 숏 청산 → 현물 롱 (다음 봉 시가 · 지금) · 이번 숏 구간 %s" % pct1(x["closed"])
+        return "🟢 **진입 신호** · 선물 숏 청산 → 현물 롱 (다음 봉 시가 · 지금) · 이번 숏 구간 %s\n%s" % (pct1(x["closed"]), chance(x["why"]))
     if x["fresh"]:
-        return "🔴 청산 신호: 현물 청산 → 선물 숏 1배 (다음 봉 시가 · 지금) · 이번 롱 구간 %s" % pct1(x["closed"])
-    return "유지: %s · %s 진입 · %s" % ("현물 롱" if x["w"] > 0 else "선물 숏 1배", _when(x["from"]), pct1(x["gain"]))
+        return "🔴 **청산 신호** · 현물 청산 → 선물 숏 1배 (다음 봉 시가 · 지금) · 이번 롱 구간 %s\n%s" % (pct1(x["closed"]), chance(x["why"]))
+    return "📌 유지 · %s · %s 진입 · %s" % ("현물 롱" if x["w"] > 0 else "선물 숏 1배", _when(x["from"]), pct1(x["gain"]))
 
 
 def head(st):
     """머리 한 줄 (굵은 글씨 없음) · 울릴지."""
     words = []
     if st["safe"]["fresh"]:
-        words.append("안전 진입 %s" % ("진입" if st["safe"]["w"] else "청산"))
+        words.append("🛡️ 안전 %s %s" % ("진입" if st["safe"]["w"] else "청산", odds(st["safe"]["why"])))
     if st["bold"]["fresh"]:
-        words.append("과감한 수익 %s" % ("현물 롱 전환" if st["bold"]["w"] > 0 else "선물 숏 전환"))
+        words.append("🚀 과감 %s %s" % ("현물 롱 전환" if st["bold"]["w"] > 0 else "선물 숏 전환", odds(st["bold"]["why"])))
     if words:
         return "🔔 BTC 신호 · " + " · ".join(words), True
     return "📡 BTC 판정 · 오늘은 자리 그대로", False
+
+
+def shade(st):
+    """봇의 선택 카드 색: 진입 신호 초록 · 청산 신호만 빨강 · 신호 없는 날 파랑."""
+    now = [x for x in (st["safe"], st["bold"]) if x["fresh"]]
+    if not now:
+        return PANEL
+    return GREEN if any(x["w"] > 0 for x in now) else cards.RED
 
 
 def compose(st):
     """디스코드 글: 머리 한 줄 + 규칙 카드 둘 + 봇의 선택. {"content", "embeds", "ring"}."""
     text, ring = head(st)
     side = lambda x, up: "%s %s" % (_usd(x), "위" if up else "아래")
-    lines = ["**안전 진입** — " + safe_line(st), "**과감한 수익** — " + bold_line(st),
-             "마지막 판정: 종가 %s · 50일선 %s · 100일선 %s · RSI(5) %.1f%s" % (_usd(st["close"]), side(st["ma50"], st["up50"]), side(st["ma100"], st["up100"]), st["rsi"],
-                                                                     " · RSI 되돌림 켜짐" if st["hold"] else ""),
-             "%s 판정 · 안전: %s" % (_when(st["next_end"]), band_text(st["safe"]["bands"], "자금 50% 현물 롱", "현금")),
-             "%s 판정 · 과감: %s" % (_when(st["next_end"]), band_text(st["bold"]["bands"], "현물 롱", "선물 숏 1배"))]
-    panel = {"title": "봇의 선택 · %s 마감 → %s" % (_when(st["end"]), _when(st["next_end"])), "color": PANEL, "description": "\n".join(lines), "footer": {"text": FOOTER}}
+    field = lambda name, value: {"name": name, "value": value, "inline": False}
+    fields = [field(SAFE["title"], safe_line(st)), field(BOLD["title"], bold_line(st)),
+              field("📊 마지막 판정", "종가 **%s** · RSI(5) %.1f%s\n50일선 %s · 100일선 %s" % (_usd(st["close"]), st["rsi"], " · RSI 되돌림 켜짐" if st["hold"] else "", side(st["ma50"], st["up50"]), side(st["ma100"], st["up100"]))),
+              field("🔮 %s 판정 · 종가에 따라" % _when(st["next_end"]), "🛡️ %s\n🚀 %s" % (band_text(st["safe"]["bands"], "자금 50% 현물 롱", "현금"), band_text(st["bold"]["bands"], "현물 롱", "선물 숏 1배")))]
+    panel = {"title": "🤖 봇의 선택 · %s 마감 → %s" % (_when(st["end"]), _when(st["next_end"])), "color": shade(st), "fields": fields, "footer": {"text": FOOTER}}
     return {"content": text, "embeds": [rule_card(SAFE, since_text(st["safe"]["since"])), rule_card(BOLD, since_text(st["bold"]["since"])), panel], "ring": ring}
 
 
