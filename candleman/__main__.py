@@ -4,8 +4,9 @@
   python -m candleman check    설정 · 키 권한 · 웹후크를 시험 (#봇-상태에 시험 글 하나)
   python -m candleman demo     가짜 체결로 알림 글이 어떻게 보이는지 화면에만 (인터넷 안 씀)
   python -m candleman summary  지난 요약 구간의 요약을 지금 #일일-요약에 보냄
-  python -m candleman hook symbols   웹후크 주소 하나만 넣거나 바꿈 (symbols = #종목설명 · positions = #현재포지션 · briefing = #일일-경제-브리핑 · journal = #매매일지 · trade · summary · status)
+  python -m candleman hook symbols   웹후크 주소 하나만 넣거나 바꿈 (symbols = #종목설명 · positions = #현재포지션 · briefing = #일일-경제-브리핑 · journal = #매매일지 · signal = #봇-시그널 · trade · summary · status)
   python -m candleman briefing  오늘 아침 경제 브리핑을 지금 #일일-경제-브리핑에 올려 봄 (클라우드 글이 없으면 숫자만)
+  python -m candleman signal   지금 판정을 #봇-시그널에 올려 봄 (signal btc · signal ipo · signal ipo 2026-10-30, 기록은 안 건드림)
   python -m candleman bot      /포지션 명령 봇의 토큰을 넣거나 바꿈 (화면에 안 보이게)
   python -m candleman update   GitHub 의 stable 판을 받아 시험해 보고 바꿈 (다시 켜기는 termux/update.sh 가 함)
 """
@@ -115,6 +116,7 @@ def _setup():
     vals["DISCORD_WEBHOOK_POSITIONS"] = input("#현재포지션 웹후크 주소 (없으면 그냥 Enter — 현재 포지션 글을 안 씀): ").strip()
     vals["DISCORD_WEBHOOK_BRIEFING"] = input("#일일-경제-브리핑 웹후크 주소 (없으면 그냥 Enter — 아침 브리핑을 안 씀): ").strip()
     vals["DISCORD_WEBHOOK_JOURNAL"] = input("#매매일지 웹후크 주소 (없으면 그냥 Enter — /일지는 #봇-상태에 남김): ").strip()
+    vals["DISCORD_WEBHOOK_SIGNAL"] = input("#봇-시그널 웹후크 주소 (없으면 그냥 Enter — 신호 글을 안 씀): ").strip()
     hour = input("요약 시각 (0~23, 그냥 Enter 면 22): ").strip() or "22"
     vals["SUMMARY_HOUR"] = hour
     lines = ["# 캔들맨 알림 설정 — 이 파일은 저장소에 올리지 않아요 (.gitignore)"] + ["%s=%s" % (k, v) for k, v in vals.items() if v]
@@ -126,7 +128,7 @@ def _setup():
 HOOK_KEYS = {"trade": ("DISCORD_WEBHOOK_TRADE", "#실시간-매매"), "summary": ("DISCORD_WEBHOOK_SUMMARY", "#일일-요약"),
              "status": ("DISCORD_WEBHOOK_STATUS", "#봇-상태"), "symbols": ("DISCORD_WEBHOOK_SYMBOLS", "#종목설명"),
              "positions": ("DISCORD_WEBHOOK_POSITIONS", "#현재포지션"), "briefing": ("DISCORD_WEBHOOK_BRIEFING", "#일일-경제-브리핑"),
-             "journal": ("DISCORD_WEBHOOK_JOURNAL", "#매매일지")}
+             "journal": ("DISCORD_WEBHOOK_JOURNAL", "#매매일지"), "signal": ("DISCORD_WEBHOOK_SIGNAL", "#봇-시그널")}
 
 
 def _write_env(lines):
@@ -177,6 +179,37 @@ def _set_bot_token():
     lines = [ln for ln in lines if not ln.strip().startswith("DISCORD_BOT_TOKEN=")] + ["DISCORD_BOT_TOKEN=%s" % token]
     _write_env(lines)
     print("저장했어요. python -m candleman check 로 확인한 뒤 ./termux/stop.sh → ./termux/start.sh 로 다시 켜 주세요.")
+    return 0
+
+
+def _signal(cfg, args):
+    """지금 판정을 #봇-시그널에 올려 봄. 돌고 있는 프로그램의 기록(state.json)은 읽기만 함."""
+    import datetime as dt
+    import time
+    from . import fmt, ipobot, signalbot
+    from .discord import Discord
+    d = Discord(cfg["hooks"], log=store.log)
+    if not d.has("signal"):
+        print("#봇-시그널 웹후크가 아직 없어요. 먼저: python -m candleman hook signal")
+        return 1
+    which = args[0] if args else "all"
+    if which not in ("all", "btc", "ipo"):
+        print("쓰는 법: python -m candleman signal · signal btc · signal ipo · signal ipo 2026-10-30")
+        return 1
+    n = int(time.time() * 1000)
+    msgs = []
+    if which != "ipo":
+        msgs.append(signalbot.compose(signalbot.read(signalbot.daily(), n)))
+    if which != "btc":
+        day = dt.date.fromisoformat(args[1]) if len(args) > 1 else fmt.kst(n).date()
+        msg, _ = ipobot.build(day, store.load_state().get("signal_ipo"))
+        if msg is None:
+            print("%s 은 장이 열린 날의 시세가 없어요. 날짜를 붙여 주세요: python -m candleman signal ipo 2026-10-30" % day)
+        else:
+            msgs.append(msg)
+    for m in msgs:
+        d._post("signal", m["content"], m["embeds"])
+    print("✅ #봇-시그널에 %d개 올렸어요." % len(msgs))
     return 0
 
 
@@ -258,6 +291,8 @@ def main(argv):
         asyncio.run(brief())
         print("✅ #일일-경제-브리핑에 올렸어요.")
         return 0
+    if cmd == "signal":
+        return _signal(cfg, argv[2:])
     if cmd == "run":
         from .app import App
         store.log("시작")

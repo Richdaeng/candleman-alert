@@ -8,7 +8,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from . import briefing, cards, fmt, names, notices, store, summary, updater
+from . import briefing, cards, fmt, ipobot, names, notices, signalbot, store, summary, updater
 from .binance import WS_PRIVATE, Binance, BinanceError
 from .discord import Discord
 from .fmt import ZERO, dec
@@ -280,6 +280,14 @@ class App:
                 await self._maybe_briefing(n)
             except Exception as e:
                 store.log("브리핑 오류: %s %s" % (type(e).__name__, str(e)[:160]))
+            try:
+                await self._maybe_signal(n)
+            except Exception as e:
+                store.log("BTC 신호 오류: %s %s" % (type(e).__name__, str(e)[:160]))
+            try:
+                await self._maybe_ipo(n)
+            except Exception as e:
+                store.log("신규 추격 오류: %s %s" % (type(e).__name__, str(e)[:160]))
             try:
                 await self._maybe_new_year(n)
             except Exception as e:
@@ -567,6 +575,37 @@ class App:
         if await self.post_briefing(t.date(), wait_ok=not late):
             self.state["briefing_posted"] = t.date().isoformat()
             store.save_state(self.state)
+
+    # ------------------------------------------------------------------ #봇-시그널
+    async def _maybe_signal(self, n):
+        """밤 11시 일봉이 닫힐 때마다 BTC 판정을 한 번. 시각이 아니라 마감 봉으로 보므로 폰이 꺼졌다 켜져도 다음 마감까지 안 놓침. 못 받으면 조금 뒤 다시."""
+        if not self.d.has("signal"):
+            return
+        end = signalbot.closed_end(n)
+        if self.state.get("signal_btc_end") == end or n < end + signalbot.WAIT or n < getattr(self, "_signal_next", 0):
+            return
+        self._signal_next = n + signalbot.RETRY
+        msg = await asyncio.to_thread(signalbot.build, n)
+        await self.d.put("signal", msg["content"], msg["embeds"], ring=msg["ring"])
+        self.state["signal_btc_end"] = end
+        store.save_state(self.state)
+
+    async def _maybe_ipo(self, n):
+        """평일 장 마감 뒤 신규 추격 판정을 한 번. 쉬는 날이면 글 없이 끝."""
+        if not self.d.has("signal"):
+            return
+        t = fmt.kst(n)
+        if not ipobot.due(t, self.state.get("signal_ipo_day")) or n < getattr(self, "_ipo_next", 0):
+            return
+        self._ipo_next = n + ipobot.RETRY
+        msg, rec = await asyncio.to_thread(ipobot.build, t.date(), self.state.get("signal_ipo"))
+        if msg is None and t.hour * 60 + t.minute < ipobot.LAST_MIN:
+            return
+        if msg:
+            await self.d.put("signal", msg["content"], msg["embeds"], ring=msg["ring"])
+            self.state["signal_ipo"] = rec
+        self.state["signal_ipo_day"] = t.date().isoformat()
+        store.save_state(self.state)
 
     # ------------------------------------------------------------------ 업데이트 · 끄기
     def _update_due(self, n):

@@ -155,6 +155,17 @@ $83,000.00에 0.04 BTC 정리 · 남은 0.06 BTC · 약 $3,320어치 · 바로 �
 - 예약 작업에 GitHub 쓰기 권한을 주는 곳은 그 브리핑 저장소뿐입니다. 이 저장소(폰이 매일 05시에 `stable`을 받아 실행하는 코드)에는 쓰지 못하게 따로 뒀습니다.
 - `DISCORD_WEBHOOK_BRIEFING` 를 넣었을 때만 켜집니다(`python -m candleman hook briefing`). 시각은 `BRIEFING_HOUR`, 바로 시험은 `python -m candleman briefing`.
 
+`#봇-시그널` (선택 · 운영자만 보는 채널): BTC 진입 · 청산 신호와 신규 추격 신호를 카드로 올립니다. **주문은 내지 않습니다.** 바이낸스 키도 쓰지 않습니다(공개 시세).
+
+- BTC(`candleman/signalbot.py`): 매일 밤 11시(UTC 14시 · `timeZone=10` 일봉) 마감 뒤 한 번 판정합니다. 규칙 = 종가가 50일선 위이거나 RSI(5)가 10 아래로 내려간 뒤 70을 넘기 전.
+  **과감한 수익**은 켜지면 현물 롱 · 꺼지면 선물 숏 1배, **안전 진입**은 켜지고 종가가 100일선 위면 자금의 50%만 현물 롱 · 아니면 현금입니다. 장중 손절은 없습니다.
+- 신규 추격(`candleman/ipobot.py`): 평일 15:36 뒤 코스닥 신규상장주(스팩 제외 · 상장 1년 안) 중 그날 거래대금 1위를 고릅니다. **크게**는 5,000억 이상 · 다음 거래일 +10% / −6%,
+  **짧게**는 3,000억 이상 · +4.3% / −10%이고 둘 다 안 닿으면 다음 거래일 정규장 끝에 정리합니다. 목록은 KRX KIND, 시세는 다음 금융입니다. 쉬는 날은 글이 없습니다.
+- 글 모양: 규칙마다 카드 한 장(시험 값 · 건수 · 적중 · 건당 평균 · 최대 낙폭 · 쉰 날 · 시작 뒤 기록)과 '봇의 선택' 카드(오늘 할 일 · 이유 · 다음 판정 가격).
+- 카드의 시험 값은 고정된 **사후 값**입니다(규칙을 고른 구간 · 신규 추격은 표본이 작고 같은 자료로 추론). 시작 뒤 기록만 앞으로 쌓입니다: BTC는 시세로 그때그때 다시 계산하고, 신규 추격은 `data/state.json` 에 남깁니다.
+- 자리가 바뀐 날 · 진입 신호가 있는 날만 `@everyone` 으로 울리고 나머지 날은 조용히 올립니다(글마다 정함 · `PING_EVERYONE` 과 따로).
+- `DISCORD_WEBHOOK_SIGNAL` 를 넣었을 때만 켜집니다(`python -m candleman hook signal`). 다른 채널로는 가지 않습니다. 바로 시험은 `python -m candleman signal` (`signal btc` · `signal ipo` · `signal ipo 2026-10-30`, 기록은 안 건드림).
+
 글쓴이 이름 · 사진은 프로그램이 정하지 않고 디스코드의 웹후크 설정을 따릅니다(채널 설정 → 연동 → 웹후크에서 바꾸면 바로 반영).
 
 ## 안전하게 만든 점
@@ -202,7 +213,8 @@ python -m candleman check
 | `python -m candleman summary` | 지난 요약 구간을 지금 다시 올림 |
 | `python -m candleman demo` | 알림 글 모양 보기 (인터넷 안 씀) |
 | `python -m candleman bot` | 명령 봇(/포지션 · /주인장수익률 · /일지 · /환영정리 · /종목소개) 토큰 넣기 · 바꾸기 (안 보이게) |
-| `python -m candleman hook symbols` | 웹후크 주소 하나만 넣거나 바꾸기 (`symbols` · `positions` · `briefing` · `journal` · `trade` · `summary` · `status`) — 바꾼 뒤 `bash termux/restart.sh` |
+| `python -m candleman hook symbols` | 웹후크 주소 하나만 넣거나 바꾸기 (`symbols` · `positions` · `briefing` · `journal` · `signal` · `trade` · `summary` · `status`) — 바꾼 뒤 `bash termux/restart.sh` |
+| `python -m candleman signal` | 지금 판정을 `#봇-시그널`에 올려 봄 (`signal btc` · `signal ipo` · `signal ipo 2026-10-30`) |
 
 ## /포지션 · /주인장수익률 명령 봇 (선택)
 
@@ -351,6 +363,7 @@ rm -rf ~/candleman-alert ~/.termux/boot/boot-candleman.sh
 - `candleman/tracker.py` 주문 · 체결 · 포지션 장부와 알림 글
 - `candleman/spot.py` 현물 주문 · 체결 장부 · 평균 매수가 · 알림 글 / `candleman/spotfeed.py` 현물 실시간 연결 · 보유
 - `candleman/briefing.py` 아침 경제 브리핑 (협회 숫자 + 클라우드 작업이 쓴 소식 · 일정)
+- `candleman/signalbot.py` BTC 진입 · 청산 신호 / `candleman/ipobot.py` 신규 추격 신호 (`#봇-시그널`)
 - `candleman/names.py` 종목 기호 → 읽기 쉬운 이름 (비트코인(BTC) · 한국 주식 ETF(EWY) …)
 - `candleman/summary.py` 하루 요약
 - `candleman/discord.py` 디스코드로 보내기
