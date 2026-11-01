@@ -10,7 +10,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from candleman import config, fmt, ipobot, signalbot, store  # noqa: E402
 from candleman.app import App  # noqa: E402
-from candleman.bot import Bot, dm_owner  # noqa: E402
+from candleman.bot import Bot, dm_owner, with_tag  # noqa: E402
 from candleman.discord import Discord  # noqa: E402
 
 DAY = signalbot.DAY
@@ -689,14 +689,24 @@ class DmTest(unittest.TestCase):
             dm_owner("t", msg)
         return calls
 
-    def test_ring_post_reaches_only_the_owner(self):
-        calls = self.send({"content": "🔔 BTC 신호", "embeds": [{"title": "카드"}], "ring": True})
+    def test_ring_post_tags_only_the_owner(self):
+        calls = self.send({"content": "🔔 BTC 신호\n둘째 줄", "embeds": [{"title": "카드"}], "ring": True})
         self.assertEqual(calls[-2], ("POST", "/users/@me/channels", {"recipient_id": "99"}))
-        self.assertEqual(calls[-1], ("POST", "/channels/dm1/messages", {"content": "🔔 BTC 신호", "embeds": [{"title": "카드"}], "allowed_mentions": {"parse": []}}))
+        self.assertEqual(calls[-1], ("POST", "/channels/dm1/messages", {"content": "🔔 BTC 신호 <@99>\n둘째 줄", "embeds": [{"title": "카드"}],
+                                                                       "allowed_mentions": {"parse": [], "users": ["99"]}}))
 
-    def test_quiet_post_has_no_phone_alert(self):
+    def test_quiet_post_has_no_tag_and_no_phone_alert(self):
         calls = self.send({"content": "📡 BTC 판정", "embeds": [], "ring": False})
-        self.assertEqual(calls[-1][2]["flags"], 4096)
+        self.assertEqual(calls[-1][2], {"content": "📡 BTC 판정", "embeds": [], "allowed_mentions": {"parse": []}, "flags": 4096})
+
+    def test_tag_stays_out_of_the_original_post(self):
+        msg = {"content": "🔔 BTC 신호", "embeds": [], "ring": True}
+        self.send(msg)
+        self.assertEqual(msg["content"], "🔔 BTC 신호")                          # 웹후크 사본은 태그 없이 조용히
+
+    def test_real_signal_headlines_get_the_tag_at_the_end_of_the_first_line(self):
+        self.assertEqual(with_tag("🔔 신규 추격 진입 신호 · 영광 · 적중 42%", "99"), "🔔 신규 추격 진입 신호 · 영광 · 적중 42% <@99>")
+        self.assertEqual(with_tag("", "99"), "<@99>")
 
     def test_same_owner_in_two_servers_is_fine(self):
         calls = self.send({"content": "c", "embeds": [], "ring": True}, guilds=(("g1", "99"), ("g2", "99")))
@@ -773,6 +783,15 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(self.run_it(hooks, ["btc"]), (0, [("signal", "머리")]))
         self.assertEqual(self.run_it(hooks, ["ipo", "2026-10-30"]), (0, [("signal", "머리")]))
         self.assertEqual(self.run_it(hooks, ["모름"]), (1, []))
+
+    def test_tag_test_rings_the_dm_and_needs_the_bot(self):
+        from candleman import __main__ as cli
+        sent = []
+        with mock.patch("candleman.bot.dm_owner", lambda tok, m: sent.append(m)), mock.patch("builtins.print"):
+            self.assertEqual(cli._signal({"hooks": {}, "bot_token": "t"}, ["test"]), 0)
+            self.assertEqual(cli._signal({"hooks": {"signal": self.hook}}, ["test"]), 1)   # 태그는 봇 DM으로만
+        self.assertEqual(len(sent), 1)
+        self.assertTrue(sent[0]["ring"])
 
     def test_closed_day_posts_nothing(self):
         from candleman import __main__ as cli

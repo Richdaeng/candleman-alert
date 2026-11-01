@@ -148,18 +148,28 @@ def whoami(token):
     return j.get("global_name") or j.get("username") or "?"
 
 
+def with_tag(text, uid):
+    """머리 줄 끝에 태그 ('🔔 BTC 신호 · … <@번호>'). 폰 알림에 내용이 먼저 보이게 #실시간-매매의 @everyone 과 같은 자리에 붙임."""
+    head, sep, rest = (text or "").partition("\n")
+    return ("%s <@%s>" % (head, uid)).lstrip() + sep + rest
+
+
 def dm_owner(token, msg):
     """글을 서버 주인 한 사람에게만 개인 메시지로 보냄(시그널 · 11/1 댕이 "나에게만"). 웹후크가 필요 없음.
-    ring 인 글만 폰 알림이 가고 나머지는 조용히 쌓임. 공개 봇이 아니라서 봇이 든 서버의 주인이 곧 운영자 —
-    주인이 둘 이상이 되면 엉뚱한 사람에게 가지 않게 보내지 않음."""
+    ring 인 글(신호가 뜬 글)은 운영자를 태그해서 폰 알림이 가고(11/2 댕이 "나를 태그해서") 나머지는 조용히 쌓임.
+    공개 봇이 아니라서 봇이 든 서버의 주인이 곧 운영자 — 주인이 둘 이상이 되면 엉뚱한 사람에게 가지 않게 보내지 않음."""
     b = Bot.__new__(Bot)
     b._token = token
     owners = {b._rest("GET", "/guilds/%s" % g["id"]).get("owner_id") for g in b._rest("GET", "/users/@me/guilds")}
     if len(owners) != 1 or None in owners:
         raise RuntimeError("시그널 받을 사람을 못 정함: 서버 주인 %d명" % len(owners))
-    room = b._rest("POST", "/users/@me/channels", {"recipient_id": owners.pop()})
+    owner = owners.pop()
+    room = b._rest("POST", "/users/@me/channels", {"recipient_id": owner})
     body = {"content": msg["content"], "embeds": msg["embeds"], "allowed_mentions": {"parse": []}}
-    if not msg.get("ring"):
+    if msg.get("ring"):
+        body["content"] = with_tag(msg["content"], owner)
+        body["allowed_mentions"]["users"] = [owner]
+    else:
         body["flags"] = SILENT
     return b._rest("POST", "/channels/%s/messages" % room["id"], body)
 

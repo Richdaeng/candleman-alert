@@ -195,9 +195,16 @@ def _signal(cfg, args):
         print("보낼 곳이 없어요. 먼저 봇 토큰을 넣어 주세요: python -m candleman bot")
         return 1
     which = args[0] if args else "all"
-    if which not in ("all", "btc", "ipo"):
-        print("쓰는 법: python -m candleman signal · signal btc · signal ipo · signal ipo 2026-10-30")
+    if which not in ("all", "btc", "ipo", "test"):
+        print("쓰는 법: python -m candleman signal · signal btc · signal ipo · signal ipo 2026-10-30 · signal test")
         return 1
+    if which == "test":                  # 판정이 조용한 날에도 태그 · 폰 알림이 오는지 볼 수 있게
+        if not token:
+            print("태그는 봇 DM으로만 보내요. 먼저 봇 토큰을 넣어 주세요: python -m candleman bot")
+            return 1
+        dm_owner(token, {"content": "🔔 시험 · 신호가 뜨면 이렇게 태그로 알림이 옴", "embeds": [], "ring": True})
+        print("✅ 나에게만 개인 메시지로 시험 글을 보냈어요. 폰에 태그 알림이 오는지 봐 주세요.")
+        return 0
     n = int(time.time() * 1000)
     msgs = []
     if which != "ipo":

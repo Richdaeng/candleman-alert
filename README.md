@@ -164,9 +164,9 @@ $83,000.00에 0.04 BTC 정리 · 남은 0.06 BTC · 약 $3,320어치 · 바로 �
 - 글 모양: 규칙마다 카드 한 장(시험 값 · 건수 · 적중 · 건당 평균 · 최대 낙폭 · 쉰 날 · 시작 뒤 기록)과 '봇의 선택' 카드(오늘 할 일 · 이유 · 다음 판정 가격).
 - 신호가 난 날은 적중 확률을 같이 적습니다: BTC는 왜 났는가(50일선 돌파 · RSI 되돌림 등 8가지)별 고정 표, 신규 추격은 규칙별 고정 값입니다. 적중 = 다음 신호에서 비용 뒤 플러스로 닫힘. 다음 판정 가격 옆의 괄호도 같은 표입니다. 사진은 `assets/signalbot.png` 를 글마다 함께 보냅니다.
 - 카드의 시험 값은 고정된 **사후 값**입니다(규칙을 고른 구간 · 신규 추격은 표본이 작고 같은 자료로 추론). 시작 뒤 기록만 앞으로 쌓입니다: BTC는 시세로 그때그때 다시 계산하고, 신규 추격은 `data/state.json` 에 남깁니다.
-- 받는 사람은 봇이 든 서버의 주인(`GET /guilds` 의 `owner_id`)뿐입니다. 자리가 바뀐 날 · 진입 신호가 있는 날만 폰 알림이 가고 나머지 날은 알림 없이 보냅니다(`@everyone` 은 쓰지 않음).
+- 받는 사람은 봇이 든 서버의 주인(`GET /guilds` 의 `owner_id`)뿐입니다. 자리가 바뀐 날 · 진입 신호가 있는 날만 머리 줄 끝에 주인을 태그해서 폰 알림이 가고 나머지 날은 태그도 알림도 없이 보냅니다(`@everyone` 은 쓰지 않음).
 - `DISCORD_BOT_TOKEN` 이 있으면 켜집니다. 서버 개인정보 설정에서 서버 멤버의 다이렉트 메시지를 막으면 못 받고, 연달아 실패하면 `#봇-상태`에 한 번 알린 뒤 될 때까지 다시 시도합니다.
-- `DISCORD_WEBHOOK_SIGNAL` 은 선택입니다. 넣으면 비공개 `#봇-시그널`에 같은 글을 알림 없이 남깁니다(`python -m candleman hook signal`). 바로 시험은 `python -m candleman signal` (`signal btc` · `signal ipo` · `signal ipo 2026-10-30`, 기록은 안 건드림).
+- `DISCORD_WEBHOOK_SIGNAL` 은 선택입니다. 넣으면 비공개 `#봇-시그널`에 같은 글을 알림 없이 남깁니다(`python -m candleman hook signal`). 바로 시험은 `python -m candleman signal` (`signal btc` · `signal ipo` · `signal ipo 2026-10-30`, 기록은 안 건드림). 조용한 날에 태그 알림만 보려면 `signal test`.
 
 글쓴이 이름 · 사진은 프로그램이 정하지 않고 디스코드의 웹후크 설정을 따릅니다(채널 설정 → 연동 → 웹후크에서 바꾸면 바로 반영).
 
@@ -216,7 +216,7 @@ python -m candleman check
 | `python -m candleman demo` | 알림 글 모양 보기 (인터넷 안 씀) |
 | `python -m candleman bot` | 명령 봇(/포지션 · /주인장수익률 · /일지 · /환영정리 · /종목소개) 토큰 넣기 · 바꾸기 (안 보이게) |
 | `python -m candleman hook symbols` | 웹후크 주소 하나만 넣거나 바꾸기 (`symbols` · `positions` · `briefing` · `journal` · `signal` · `trade` · `summary` · `status`) — 바꾼 뒤 `bash termux/restart.sh` |
-| `python -m candleman signal` | 지금 판정을 나에게만(봇 DM) 보내 봄 (`signal btc` · `signal ipo` · `signal ipo 2026-10-30`) |
+| `python -m candleman signal` | 지금 판정을 나에게만(봇 DM) 보내 봄 (`signal btc` · `signal ipo` · `signal ipo 2026-10-30` · 태그 알림 시험 `signal test`) |
 
 ## /포지션 · /주인장수익률 명령 봇 (선택)
 
