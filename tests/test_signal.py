@@ -259,6 +259,7 @@ class ComposeTest(unittest.TestCase):
 KIND_LIST = """
 <tr onclick="fnDetailView('52340','1234')"><td>인텔리빅스</td><td>2026-10-30</td><td>신규상장</td><td>주권</td><td>소프트웨어</td><td>한국</td><td>주관</td><td>500</td><td>1,000</td><td>100</td><td>보통주</td><td>1,000</td></tr>
 <tr onclick="fnDetailView('47900','1235')"><td>어떤제9호스팩</td><td>2026-10-20</td><td>신규상장</td><td>주권</td><td>금융</td><td>한국</td><td>주관</td><td>100</td><td>2,000</td><td>100</td><td>기업인수목적회사</td><td>1,000</td></tr>
+<tr onclick="fnDetailView('25003','1236')"><td>진코스텍</td><td>2026-10-15</td><td>이전상장</td><td>주권</td><td>화장품</td><td>한국</td><td>주관</td><td>500</td><td>5,000</td><td>100</td><td>화장품 OEM</td><td>1,000</td></tr>
 """
 KIND_PLAN = """
 <tr><td>회사명</td></tr>
@@ -274,16 +275,19 @@ class KindTest(unittest.TestCase):
         rows = ipobot.parse_listed(KIND_LIST)
         self.assertEqual(rows[0], {"name": "인텔리빅스", "code": "A523400", "listed": "2026-10-30", "spac": False})
         self.assertTrue(rows[1]["spac"])
+        self.assertEqual(rows[2], {"name": "진코스텍", "code": "A250030", "listed": "2026-10-15", "spac": False})   # 이전상장도 같은 표
         with mock.patch.object(ipobot, "parse_listed", return_value=[{"name": "x", "code": "A1", "listed": "d", "spac": i % 2 == 1} for i in range(100)]):
-            pages = []
+            pages, kinds = [], set()
 
             def post(url, body):
                 pages.append(body["pageIndex"])
+                kinds.add(body["listTypeArrStr"])
                 if len(pages) == 2:
                     ipobot.parse_listed.return_value = []
                 return ""
             self.assertEqual(len(ipobot.listed(dt.date(2026, 10, 30), post)), 50)   # 100행이면 다음 쪽 · 스팩은 뺌
         self.assertEqual(pages, ["1", "2"])
+        self.assertEqual(kinds, {"01|02|"})                                      # 신규상장 + 이전상장
 
     def test_plan_table_sorted_without_spac(self):
         self.assertEqual(ipobot.parse_plan(KIND_PLAN), [("2026-11-02", "영광"), ("2026-11-03", "래블업")])
@@ -440,6 +444,43 @@ class SettleTest(unittest.TestCase):
         self.assertEqual(ipobot.settle(rec, dt.date(2026, 11, 2), FakeDaum({}, {"A1": bars})), [])
         self.assertEqual(rec["big"]["n"], 0)
 
+    def test_after_market_signal_uses_after_close(self):
+        rec = ipobot.fresh()
+        rec["pending"] = [{"rule": "small", "code": "A1", "name": "가", "date": "2026-11-04", "entry": 100.0, "after": True}]
+        bars = [bar("2026-11-04", "15:25", 100, 100, 100, 100), bar("2026-11-04", "16:00", 100, 101, 95, 96), bar("2026-11-04", "19:55", 96, 97, 95, 96),
+                bar("2026-11-05", "09:00", 96, 100.2, 95, 100)]
+        lines = ipobot.settle(rec, dt.date(2026, 11, 5), FakeDaum({}, {"A1": bars}))
+        self.assertEqual(lines, ["가 짧게 익절 +4.0% (애프터 종가 96원 기준)"])     # 96 기준 익절선 100.13 → 고가 100.2 (정규장 종가 100 기준이면 104.3이라 못 닿음)
+        self.assertAlmostEqual(rec["small"]["eq"], 1 + 0.043 - 0.003)
+        rec["pending"] = [{"rule": "small", "code": "A1", "name": "가", "date": "2026-11-04", "entry": 100.0, "after": True}]
+        lines = ipobot.settle(rec, dt.date(2026, 11, 5), FakeDaum({}, {"A1": bars[:1] + bars[3:]}))
+        self.assertEqual(lines, ["가 짧게 안 닿아 종가 정리 −0.3% (애프터 봉이 없어 정규장 종가 기준)"])
+
+    def test_signal_before_a_listing_day_is_dropped(self):
+        rec = ipobot.fresh()
+        rec["pending"] = [{"rule": "big", "code": "A1", "name": "영광", "date": "2026-11-02", "entry": 100.0},
+                          {"rule": "small", "code": "A1", "name": "영광", "date": "2026-11-02", "entry": 100.0}]
+        bars = [bar("2026-11-03", "09:00", 100, 111, 99, 110)]
+        lines = ipobot.settle(rec, dt.date(2026, 11, 3), FakeDaum({}, {"A1": bars}), [("2026-11-02", "영광"), ("2026-11-03", "래블업")])
+        self.assertEqual(lines, ["영광 크게 거름(래블업 상장)", "영광 짧게 거름(래블업 상장)"])   # 거르기 전에 올린 11/2 신호
+        self.assertEqual(rec["pending"], [])
+        self.assertEqual((rec["big"]["n"], rec["small"]["n"]), (0, 0))
+        rec["pending"] = [{"rule": "big", "code": "A2", "name": "인텔리빅스", "date": "2026-10-30", "entry": 100.0}]
+        bars = [bar("2026-11-02", "09:00", 100, 111, 99, 110)]
+        lines = ipobot.settle(rec, dt.date(2026, 11, 2), FakeDaum({}, {"A2": bars}), [("2026-10-31", "인텔리빅스")])
+        self.assertEqual(lines, ["인텔리빅스 크게 익절 +9.7%"])                     # 예정일(토)보다 먼저 상장한 자기 자신은 안 셈
+        rec["pending"] = [{"rule": "big", "code": "A1", "name": "가", "date": "2026-11-02", "entry": 100.0, "after": True}]
+        bars = [bar("2026-11-03", "09:00", 100, 111, 99, 110)]
+        lines = ipobot.settle(rec, dt.date(2026, 11, 3), FakeDaum({}, {"A1": bars}), [("2026-11-03", "래블업")])
+        self.assertEqual(lines, ["가 크게 익절 +9.7% (애프터 봉이 없어 정규장 종가 기준)"])   # 애프터 신호는 올릴 때 걸렀으니 다시 안 봄
+
+    def test_next_listings(self):
+        plans = [("2026-10-29", "크리에이츠"), ("2026-10-31", "인텔리빅스"), ("2026-11-02", "영광"), ("2026-11-03", "래블업")]
+        self.assertEqual(ipobot.next_listings(dt.date(2026, 10, 30), plans, {"인텔리빅스"}), ["영광"])    # 예정일(토)보다 먼저 상장한 자기 자신은 뺌
+        self.assertEqual(ipobot.next_listings(dt.date(2026, 10, 29), plans, set()), ["크리에이츠"])       # 예정일에 거래가 없으면 다음 날로 밀린 것으로 봄
+        self.assertEqual(ipobot.next_listings(dt.date(2026, 10, 30), plans), ["인텔리빅스", "영광"])     # 지난 신호를 볼 때는 다음 날 예정만
+        self.assertEqual(ipobot.next_listings(dt.date(2026, 11, 3), plans, {"래블업"}), [])
+
     def test_loss_updates_drawdown(self):
         r = ipobot.fresh()["big"]
         for p in (0.1, -0.2, 0.05):
@@ -453,21 +494,38 @@ class IpoComposeTest(unittest.TestCase):
 
     def test_big_signal_rings_with_prices(self):
         rows = [{"name": "인텔리빅스", "code": "A1", "listed": "2026-10-30", "close": 31000.0, "value": 1.19e12}]
-        msg = ipobot.compose(self.today, rows, [], [("2026-11-02", "영광"), ("2026-11-03", "래블업")], [], ipobot.fresh())
+        msg = ipobot.compose(self.today, rows, [], [("2026-11-03", "래블업"), ("2026-11-04", "이에스티")], [], ipobot.fresh())
         self.assertTrue(msg["ring"])
-        self.assertEqual(msg["content"], "🔔 신규 추격 진입 신호 · 인텔리빅스 · 10/30 장 마감 → 11/2 · 크게 적중 56% · 짧게 적중 76%")
+        self.assertEqual(msg["content"], "🔔 신규 추격 진입 신호 · 인텔리빅스 · 10/30 장 마감 → 11/2 · 크게 적중 59% · 짧게 적중 85%")
         panel = msg["embeds"][2]["description"]
         self.assertIn("거래대금 1위: 인텔리빅스 1조 1,900억 · 종가 31,000원 · 오늘 상장", panel)
-        self.assertIn("11/2 익절 34,100원(+10.0%) · 손절 29,140원(−6.0%)", panel)
-        self.assertIn("익절 32,333원(+4.3%) · 손절 27,900원(−10.0%)", panel)
-        self.assertIn("다음 상장(예정): 11/2 영광 · 11/3 래블업", panel)
-        self.assertIn("🎯 적중 확률 **56%** · 이기면 평균 +9.9% · 지면 평균 −7.5% · 지난 34건", panel)
-        self.assertIn("🎯 적중 확률 **76%** · 이기면 평균 +6.2% · 지면 평균 −10.9% · 지난 51건", panel)
+        self.assertIn("🔥 **크게** — 🟢 **진입 신호** · 17시 ~ 19:55 애프터마켓에서 매수 → 11/2 익절 +10.0% · 손절 −6.0%(산 값 기준) · 안 닿으면 정규장 끝에 정리", panel)
+        self.assertIn("💰 종가 31,000원 기준이면 익절 34,100원 · 손절 29,140원", panel)
+        self.assertIn("💰 종가 31,000원 기준이면 익절 32,333원 · 손절 27,900원", panel)
+        self.assertIn("다음 상장(예정): 11/3 래블업 · 11/4 이에스티", panel)
+        self.assertIn("🎯 적중 확률 **59%** · 이기면 평균 +9.9% · 지면 평균 −6.3% · 지난 27건", panel)
+        self.assertIn("🎯 적중 확률 **85%** · 이기면 평균 +5.8% · 지면 평균 −9.5% · 지난 40건", panel)
         self.assertEqual(msg["embeds"][2]["color"], signalbot.GREEN)
-        msg = ipobot.compose(self.today, rows, [], [("2026-10-31", "인텔리빅스"), ("2026-11-02", "영광")], [], ipobot.fresh())
-        self.assertIn("다음 상장(예정): 11/2 영광", msg["embeds"][2]["description"])   # 예정일보다 먼저 상장한 종목은 뺌
+        msg = ipobot.compose(self.today, rows, [], [("2026-10-31", "인텔리빅스"), ("2026-11-03", "래블업")], [], ipobot.fresh())
+        self.assertTrue(msg["ring"])                                             # 예정일(토)보다 먼저 상장한 자기 자신은 다음 날 상장으로 안 셈
+        self.assertIn("다음 상장(예정): 11/3 래블업", msg["embeds"][2]["description"])   # 예정일보다 먼저 상장한 종목은 뺌
         self.assertNotIn("10/31", msg["embeds"][2]["description"])
         self.assertEqual((msg["embeds"][0]["title"], msg["embeds"][0]["author"]["name"]), ("🔥 신규 추격 크게", "+10% · −6%"))
+
+    def test_listing_next_day_holds_without_ring(self):
+        rows = [{"name": "영광", "code": "A1", "listed": "2026-11-02", "close": 40000.0, "value": 6e11}]
+        msg = ipobot.compose(dt.date(2026, 11, 2), rows, [], [("2026-11-02", "영광"), ("2026-11-03", "래블업")], [], ipobot.fresh())
+        self.assertFalse(msg["ring"])
+        self.assertEqual(msg["content"], "📡 신규 추격 · 11/2 장 마감 → 11/3 · 오늘은 거름 · 11/3 래블업 상장 예정")
+        panel = msg["embeds"][2]["description"]
+        self.assertIn("🔥 **크게** — ⏸️ 오늘은 거름 · 11/3 래블업 상장 예정(수급이 나뉨)", panel)
+        self.assertIn("⚡ **짧게** — ⏸️ 오늘은 거름 · 11/3 래블업 상장 예정(수급이 나뉨)", panel)
+        self.assertNotIn("진입 신호", panel)
+        self.assertEqual(msg["embeds"][2]["color"], signalbot.PANEL)
+        rows[0]["value"] = 3.5e11
+        panel = ipobot.compose(dt.date(2026, 11, 2), rows, [], [("2026-11-03", "래블업")], [], ipobot.fresh())["embeds"][2]["description"]
+        self.assertIn("🔥 **크게** — 💤 오늘은 쉼 · 1위 거래대금이 5,000억 미달", panel)   # 거래대금 미달이 먼저
+        self.assertIn("⚡ **짧게** — ⏸️ 오늘은 거름", panel)
 
     def test_quiet_when_top_is_small(self):
         rows = [{"name": "가", "code": "A1", "listed": "2026-10-01", "close": 1000.0, "value": 1.559e11}]
@@ -536,8 +594,16 @@ class BuildTest(unittest.TestCase):
         msg, out = ipobot.build(self.today, rec, FakeDaum(quotes), self.post, sleep=lambda s: None)
         self.assertTrue(msg["ring"])
         self.assertEqual(rec["pending"], [])                                     # 받은 기록은 안 건드림
-        self.assertEqual([(x["rule"], x["entry"]) for x in out["pending"]], [("big", 31000.0), ("small", 31000.0)])
+        self.assertEqual([(x["rule"], x["entry"], x["after"]) for x in out["pending"]], [("big", 31000.0, True), ("small", 31000.0, True)])
         self.assertTrue(json.dumps(out))
+
+    def test_listing_next_day_adds_nothing_to_pending(self):
+        quotes = {ipobot.SAMPLE: [days_row("2026-10-30", 1, 1)], "A523400": [days_row("2026-10-30", 31000, 1.19e12)]}
+        post = lambda url, body: KIND_LIST if url == ipobot.KIND_LIST else KIND_PLAN    # 11/2 영광 상장 예정
+        msg, out = ipobot.build(self.today, ipobot.fresh(), FakeDaum(quotes), post, sleep=lambda s: None)
+        self.assertFalse(msg["ring"])
+        self.assertEqual(msg["content"], "📡 신규 추격 · 10/30 장 마감 → 11/2 · 오늘은 거름 · 11/2 영광 상장 예정")
+        self.assertEqual(out["pending"], [])
 
 
 class Q:
