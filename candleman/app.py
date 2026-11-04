@@ -602,14 +602,16 @@ class App:
             await self.d.put("signal", msg["content"], msg["embeds"])
 
     async def _maybe_signal(self, n):
-        """밤 11시 일봉이 닫힐 때마다 BTC 판정을 한 번. 시각이 아니라 마감 봉으로 보므로 폰이 꺼졌다 켜져도 다음 마감까지 안 놓침. 못 받으면 조금 뒤 다시."""
+        """6분할 판정 시각(4시간마다 · 한국 3 · 7 · 11 · 15 · 19 · 23시)의 일봉이 닫힐 때마다 BTC 판정을 한 번(11/4 댕이 "6분할로").
+        시각이 아니라 마감 봉으로 보므로 폰이 꺼졌다 켜져도 가장 최근 마감 글 하나만 보내고, 그 사이 바뀐 분할은 그 글에 같이 적음. 못 받으면 조금 뒤 다시."""
         if not self._signal_on():
             return
-        end = signalbot.closed_end(n)
-        if self.state.get("signal_btc_end") == end or n < end + signalbot.WAIT or n < getattr(self, "_signal_next", 0):
+        end = signalbot.last_end(n)
+        last = self.state.get("signal_btc_end")
+        if last == end or n < end + signalbot.WAIT or n < getattr(self, "_signal_next", 0):
             return
         self._signal_next = n + signalbot.RETRY
-        msg = await asyncio.to_thread(signalbot.build, n)
+        msg = await asyncio.to_thread(signalbot.build, n, signalbot._get, last)
         await self._signal_send(msg)
         self.state["signal_btc_end"] = end
         store.save_state(self.state)

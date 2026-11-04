@@ -208,7 +208,7 @@ def _signal(cfg, args):
     n = int(time.time() * 1000)
     msgs = []
     if which != "ipo":
-        msgs.append(signalbot.compose(signalbot.read(signalbot.daily(), n)))
+        msgs.append(signalbot.build(n, strict=False))      # 6분할 · 마감 봉이 아직이면 있는 데까지
     if which != "btc":
         day = dt.date.fromisoformat(args[1]) if len(args) > 1 else fmt.kst(n).date()
         msg, _ = ipobot.build(day, store.load_state().get("signal_ipo"))

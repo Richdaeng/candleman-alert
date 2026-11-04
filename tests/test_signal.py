@@ -185,17 +185,17 @@ class ComposeTest(unittest.TestCase):
         msg = signalbot.compose(state_of(c + [96.0]))                            # 이평 아래로 (RSI 는 10 위라 되돌림 안 켜짐)
         self.assertTrue(msg["ring"])
         panel = panel_of(msg)
-        self.assertIn("🔴 **청산 신호** · 현물 전부 정리", panel)
-        self.assertIn("🔴 **청산 신호** · 현물 청산 → 선물 숏 1배", panel)
+        self.assertIn("🔴 **정리 신호** · 현물 전부 정리", panel)
+        self.assertIn("🔴 **정리 신호** · 현물 정리 → 선물 숏 1배", panel)
         self.assertEqual(panel.count("🎯 적중 확률"), 2)
-        self.assertEqual(msg["content"], "🔔 BTC 신호 · 🛡️ 안전 청산 적중 25% · 🚀 과감 선물 숏 전환 적중 26%")
+        self.assertEqual(msg["content"], "🔔 BTC 신호 · 🛡️ 안전 정리 적중 25% · 🚀 과감 선물 숏 전환 적중 26%")
         self.assertEqual(msg["embeds"][2]["color"], signalbot.cards.RED)
 
     def test_big_drop_keeps_bold_long_by_rsi(self):
         up = [100.0 + i for i in range(420)]
-        msg = signalbot.compose(state_of(up + [up[-1] * 0.6]))                   # 하루 −40%: RSI 가 10 아래로 → 과감은 되돌림으로 유지 · 안전은 100일선 아래라 청산
+        msg = signalbot.compose(state_of(up + [up[-1] * 0.6]))                   # 하루 −40%: RSI 가 10 아래로 → 과감은 되돌림으로 유지 · 안전은 100일선 아래라 정리
         panel = panel_of(msg)
-        self.assertIn("🔴 **청산 신호** · 현물 전부 정리", panel)
+        self.assertIn("🔴 **정리 신호** · 현물 전부 정리", panel)
         self.assertIn("📌 유지 · 현물 롱", panel)
         self.assertIn("RSI 되돌림 켜짐", panel)
 
@@ -204,7 +204,7 @@ class ComposeTest(unittest.TestCase):
         self.assertTrue(msg["ring"])
         panel = panel_of(msg)
         self.assertIn("🟢 **진입 신호** · 자금 50% 현물 롱", panel)
-        self.assertIn("🟢 **진입 신호** · 선물 숏 청산 → 현물 롱", panel)
+        self.assertIn("🟢 **진입 신호** · 선물 숏 정리 → 현물 롱", panel)
         self.assertIn("🎯 적중 확률 **32%** · 100일선 돌파", panel)
         self.assertIn("🎯 적중 확률 **21%** · 50일선 돌파", panel)
         self.assertEqual(msg["content"], "🔔 BTC 신호 · 🛡️ 안전 진입 적중 32% · 🚀 과감 현물 롱 전환 적중 21%")
@@ -241,19 +241,216 @@ class ComposeTest(unittest.TestCase):
         st = state_of([100.0 + i for i in range(int(days) + 5)])
         self.assertGreater(st["bold"]["since"]["ret"], 0)
 
-    def test_build_waits_for_the_closed_bar(self):
-        closes = [100.0 + i for i in range(420)]
-        rows = rows_of(closes)
-        n = int(rows[-1][6]) + DAY + 60_000                                      # 다음 봉이 닫혔는데 받은 자료에 없음
-        with self.assertRaises(ValueError):
-            signalbot.build(n, fake_fetch(rows))
-        self.assertIn("embeds", signalbot.build(int(rows[-1][6]) + 60_000, fake_fetch(rows)))
-
     def test_open_bar_is_not_used(self):
         closes = [100.0 + i for i in range(420)]
         rows = rows_of(closes + [1.0])                                           # 아직 안 닫힌 봉의 값이 판정에 들어가면 안 됨
         st = signalbot.read(rows, int(rows[-2][6]) + 1000)
         self.assertEqual(st["close"], closes[-1])
+
+
+HOUR = signalbot.HOUR
+WAVE = [100.0 + (1 if i % 2 else -1) for i in range(302)]                       # 50일선 언저리를 오가다 위에서 끝남
+
+
+def six_rows(n, closes_of, late=()):
+    """분할마다 n 에 마지막으로 닫힌 일봉까지 → {timeZone: 일봉}. late 의 분할은 마지막 봉이 아직 안 온 자료."""
+    out = {}
+    for h in signalbot.HOURS:
+        c = closes_of(h)
+        end = signalbot.closed_end(n, h * HOUR) - (DAY if h in late else 0)
+        out[signalbot.tz_of(h)] = rows_of(c, end - (len(c) - 1) * DAY)
+    return out
+
+
+def six_fetch(by_tz):
+    def fetch(url):
+        if "endTime" in url:
+            return "[]"
+        return json.dumps(by_tz[int(url.split("timeZone=")[1].split("&")[0])])
+    return fetch
+
+
+def size_ok(case, msg):
+    """디스코드 한도: 글 전체 6000자 · 카드 10장 · 필드 25개 · 필드 이름 256 · 값 1024 · 꼬리말 2048."""
+    total = 0
+    case.assertLessEqual(len(msg["embeds"]), 10)
+    for e in msg["embeds"]:
+        total += len(e.get("title", "")) + len(e.get("description", "")) + len(e.get("footer", {}).get("text", "")) + len(e.get("author", {}).get("name", ""))
+        case.assertLessEqual(len(e.get("fields", [])), 25)
+        case.assertLessEqual(len(e.get("footer", {}).get("text", "")), 2048)
+        for f in e.get("fields", []):
+            case.assertLessEqual(len(f["name"]), 256)
+            case.assertLessEqual(len(f["value"]), 1024)
+            total += len(f["name"]) + len(f["value"])
+    case.assertLess(total, 6000)
+
+
+class SixTest(unittest.TestCase):
+    """6분할(11/4): 4시간마다 한 분할씩 · 분할마다 그 시각에 닫히는 일봉 · 다음 판정의 매수 · 매도 기준가를 달러로."""
+
+    def at(self, day, h, m=1):
+        return int(dt.datetime(2026, 11, day, h, m, tzinfo=fmt.KST).timestamp() * 1000)
+
+    def sts(self, n, closes_of, late=()):
+        return signalbot.read6(n, six_fetch(six_rows(n, closes_of, late)))
+
+    def panel(self, msg):
+        return msg["embeds"][-1]
+
+    def test_hours_and_names(self):
+        self.assertEqual([signalbot.tz_of(h) for h in signalbot.HOURS], [-2, -6, -10, 10, 6, 2])      # 14시 → 10 = 밤 11시 판정 주소 그대로
+        self.assertEqual(signalbot.URL, signalbot.KLINES % signalbot.tz_of(14))
+        self.assertEqual([signalbot.label(h) for h in signalbot.HOURS], ["11시 분할", "15시 분할", "19시 분할", "23시 분할", "03시 분할", "07시 분할"])
+
+    def test_last_end_moves_every_4_hours(self):
+        self.assertEqual(signalbot.last_end(self.at(5, 6, 59)), self.at(5, 3, 0))
+        self.assertEqual(signalbot.last_end(self.at(5, 7, 0)), self.at(5, 7, 0))
+        self.assertEqual(signalbot.last_end(self.at(5, 0, 30)), self.at(4, 23, 0))
+
+    def test_get_reads_gzip_and_plain(self):
+        import gzip
+
+        class Resp:
+            def __init__(self, body, enc):
+                self.body, self.headers = body, ({"Content-Encoding": enc} if enc else {})
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return self.body
+        sent = []
+        for body, enc in ((gzip.compress("[1, \"가\"]".encode("utf-8")), "gzip"), ("[1, \"가\"]".encode("utf-8"), None)):
+            def fake(req, timeout=None):
+                sent.append(req.get_header("Accept-encoding"))
+                return Resp(body, enc)
+            with mock.patch("candleman.signalbot.urllib.request.urlopen", fake):
+                self.assertEqual(signalbot._get("https://data-api.binance.vision/x"), "[1, \"가\"]")
+        self.assertEqual(sent, ["gzip", "gzip"])
+
+    def test_misaligned_bars_are_refused(self):
+        n = self.at(5, 7, 1)
+        rows = rows_of([100.0 + i for i in range(420)])                           # 모든 주소에 밤 11시 마감 봉이 오면
+        with self.assertRaises(ValueError):
+            signalbot.read6(n, fake_fetch(rows))
+
+    def test_dollar_edges_flip_the_real_judgment_within_a_cent(self):
+        for c in (WAVE, [100.0 + i for i in range(420)], [500.0 - i for i in range(420)]):
+            J = signalbot.judge(c)
+            rs = signalbot.edges(c, J, 0)
+            self.assertEqual(rs[0][0], c[-1] * 0.7)
+            for a, b in zip(rs, rs[1:]):
+                lo, hi = signalbot.judge(c + [b[0] - 0.02])["bold"][-1], signalbot.judge(c + [b[0] + 0.02])["bold"][-1]
+                self.assertEqual((lo > 0, hi > 0), (a[2], b[2]))
+            ups = [b[0] for b in rs if b[3] == "50일선 돌파"]
+            if ups:
+                self.assertAlmostEqual(ups[0], sum(c[-49:]) / 49, delta=0.01)      # 50일선 기준 = 지난 49개 종가 합 / 49
+
+    def test_criteria_words(self):
+        w = "11/5 11:00"
+        two = [[50, 60, True, "RSI 되돌림"], [60, 80, False, None], [80, 120, True, "50일선 돌파"]]
+        self.assertEqual(signalbot.criteria(two, 75, w), "🟢 매수 · 11/5 11:00 종가 **$80** 위 (50일선 돌파 · 적중 21%) · 또는 **$60** 아래 (RSI 되돌림 · 적중 42%)")
+        mid = [[50, 60, True, None], [60, 80, False, "50일선 이탈"], [80, 120, True, None]]
+        self.assertEqual(signalbot.criteria(mid, 90, w), "🔴 매도 · 11/5 11:00 종가 **$80** 아래 (50일선 이탈 · 적중 26%) · 단 $60 아래면 RSI 되돌림으로 그대로")
+        ends = [[50, 95, True, None], [95, 110, False, "되돌림 끝남"], [110, 130, True, None]]
+        self.assertEqual(signalbot.criteria(ends, 90, w), "🔴 매도 · 11/5 11:00 종가 **$95** 위 (되돌림 끝남 · 적중 36%) · 단 $110 위면 50일선 위라 그대로")
+        self.assertEqual(signalbot.criteria([[50, 130, True, None]], 90, w), "📌 11/5 11:00 종가가 지금 ±30% 안이면 그대로")
+
+    def test_quiet_split_post(self):
+        n = self.at(5, 7, 1)
+        msg = signalbot.compose6(self.sts(n, lambda h: [100.0 + i for i in range(420)]), n, self.at(5, 3, 0))
+        self.assertFalse(msg["ring"])
+        self.assertEqual(msg["content"], "📡 BTC 6분할 · 07시 분할 판정 · 자리 그대로 · 롱 6 · 숏 0")
+        self.assertEqual(len(msg["embeds"]), 1)                                  # 규칙 카드 · 안전 진입은 밤 11시 글에만
+        p = self.panel(msg)
+        self.assertEqual(p["title"], "🤖 6분할 · 11/5 07:00 판정 → 다음 11/5 11:00")
+        self.assertEqual(p["color"], signalbot.PANEL)
+        names = [f["name"] for f in p["fields"]]
+        self.assertEqual(names[0], "⏱️ 07시 분할 · 방금 판정")
+        self.assertEqual(names[1:], ["🟢 %s · 현물 롱" % x for x in ("11시 분할", "15시 분할", "19시 분할", "23시 분할", "03시 분할", "07시 분할")])   # 다음 판정이 가까운 분할부터
+        self.assertIn("🔴 매도 · 11/5 11:00 종가 **$", p["fields"][1]["value"])
+        self.assertIn("· 단 $", p["fields"][1]["value"])                          # 크게 떨어지면 RSI 되돌림으로 그대로
+        self.assertIn("🔴 매도 · 11/6 07:00 종가", p["fields"][6]["value"])         # 방금 판정한 분할은 내일 같은 시각
+        self.assertNotIn("⏰", p["description"])
+        self.assertNotIn("2017-11부터", p["footer"]["text"])
+        size_ok(self, msg)
+
+    def test_turn_at_the_judged_split_rings(self):
+        n = self.at(5, 7, 1)
+        msg = signalbot.compose6(self.sts(n, lambda h: WAVE + ([96.0] if h == 22 else [101.0])), n, self.at(5, 3, 0))
+        self.assertTrue(msg["ring"])
+        self.assertEqual(msg["content"], "🔔 BTC 6분할 신호 · 07시 분할 매도(선물 숏 1배) 적중 26%")
+        now = self.panel(msg)["fields"][0]["value"]
+        self.assertIn("🔴 **매도 신호** · 현물 정리 → 선물 숏 1배", now)
+        self.assertIn("🎯 적중 확률 **26%** · 50일선 이탈", now)
+        self.assertNotIn("지난", now)                                             # 지난 건수는 밤 11시 판정의 수
+        self.assertEqual(self.panel(msg)["color"], signalbot.cards.RED)
+        self.assertIn("롱 5 · 🔴 숏 1", self.panel(msg)["description"])
+        self.assertEqual(self.panel(msg)["fields"][-1]["name"], "🔴 07시 분할 · 선물 숏 1배")
+        size_ok(self, msg)
+
+    def test_missed_turns_are_told_and_ring(self):
+        n = self.at(5, 7, 1)
+        sts = self.sts(n, lambda h: WAVE + ([96.0] if h == 18 else [101.0]))       # 03시 분할이 바뀐 사이 폰이 꺼져 있었음
+        msg = signalbot.compose6(sts, n, self.at(4, 23, 0))
+        self.assertTrue(msg["ring"])
+        self.assertEqual(msg["content"], "🔔 BTC 6분할 신호 · 놓친 판정 03시 분할 매도")
+        missed = self.panel(msg)["fields"][1]
+        self.assertEqual(missed["name"], "🔔 놓친 판정 · 11/4 23:00 글 뒤")
+        self.assertTrue(missed["value"].startswith("🔴 03시 분할 · 11/5 03:00 판정에 매도 → 선물 숏 1배 (50일선 이탈 · 적중 26%)"))
+        self.assertTrue(self.panel(msg)["fields"][0]["value"].startswith("📌 그대로 · 현물 롱"))
+        quiet = signalbot.compose6(sts, n, self.at(5, 3, 0))                     # 03시 글을 이미 보냈으면 다시 안 울림
+        self.assertFalse(quiet["ring"])
+        self.assertNotIn("놓친", quiet["content"])
+        self.assertFalse(signalbot.compose6(sts, n)["ring"])                     # 처음 보내는 글(last 없음)도 지난 일은 안 울림
+
+    def test_11pm_post_has_rule_cards_and_safe_entry(self):
+        n = self.at(4, 23, 1)
+        msg = signalbot.compose6(self.sts(n, lambda h: [100.0 + i for i in range(420)]), n, self.at(4, 19, 0))
+        self.assertEqual([e.get("title") for e in msg["embeds"][:2]], ["🛡️ 안전 진입", "🚀 과감한 수익 · 6분할"])
+        bold = msg["embeds"][1]
+        self.assertEqual(bold["author"]["name"], "수익 우선 · 4시간마다")
+        self.assertTrue(bold["description"].startswith("## +23,593%\n"))
+        self.assertEqual([f["name"] for f in bold["fields"]], ["분할마다 건수", "적중", "건당 평균", "최대 낙폭", "전환", "시작 뒤 기록"])
+        p = self.panel(msg)
+        self.assertEqual(p["fields"][-1]["name"], "🛡️ 안전 진입 · 밤 11시 판정")
+        self.assertIn("📌 유지 · 자금 50% 현물 롱", p["fields"][-1]["value"])
+        self.assertIn("🔴 정리(→ 현금) · 11/5 23:00 종가", p["fields"][-1]["value"])
+        self.assertIn("2017-11부터", p["footer"]["text"])
+        size_ok(self, msg)
+
+    def test_11pm_turn_keeps_the_count(self):
+        n = self.at(4, 23, 1)
+        msg = signalbot.compose6(self.sts(n, lambda h: WAVE + ([96.0] if h == 14 else [101.0])), n, self.at(4, 19, 0))
+        self.assertIn("· 지난 94건", self.panel(msg)["fields"][0]["value"])
+        self.assertEqual(msg["content"], "🔔 BTC 6분할 신호 · 23시 분할 매도(선물 숏 1배) 적중 26% · 🛡️ 안전 정리 적중 25%")
+        size_ok(self, msg)
+
+    def test_safe_turn_missed_at_11pm_is_told_later(self):
+        n = self.at(5, 3, 1)
+        msg = signalbot.compose6(self.sts(n, lambda h: WAVE + ([96.0] if h == 14 else [101.0])), n, self.at(4, 19, 0))
+        self.assertIn("🛡️ 안전 정리 적중 25%", msg["content"])
+        self.assertEqual(self.panel(msg)["fields"][-1]["name"], "🛡️ 안전 진입 · 밤 11시 판정")
+        self.assertEqual(len(msg["embeds"]), 1)
+
+    def test_late_post_says_so(self):
+        sts = self.sts(self.at(5, 7, 1), lambda h: [100.0 + i for i in range(420)])
+        self.assertIn("⏰ 마감 15분 뒤에 보냄", self.panel(signalbot.compose6(sts, self.at(5, 7, 15)))["description"])
+        self.assertIn("⏰ 마감 2시간 5분 뒤에 보냄", self.panel(signalbot.compose6(sts, self.at(5, 9, 5)))["description"])
+        self.assertNotIn("⏰", self.panel(signalbot.compose6(sts, self.at(5, 7, 5)))["description"])
+
+    def test_build_waits_for_every_split(self):
+        n = self.at(5, 7, 1)
+        up = lambda h: [100.0 + i for i in range(420)]                          # noqa: E731
+        with self.assertRaises(ValueError):
+            signalbot.build(n, six_fetch(six_rows(n, up, late=(22,))))          # 07시 봉이 아직 안 옴
+        with self.assertRaises(ValueError):
+            signalbot.build(n, six_fetch(six_rows(n, up, late=(10,))))          # 다른 분할 자료가 하루 밀림
+        self.assertIn("embeds", signalbot.build(n, six_fetch(six_rows(n, up))))
+        self.assertIn("embeds", signalbot.build(n, six_fetch(six_rows(n, up, late=(22,))), strict=False))   # 명령으로 보내 볼 땐 있는 데까지
 
 
 KIND_LIST = """
@@ -626,6 +823,7 @@ class AppTest(unittest.TestCase):
         app.state = {}
         app.cfg = {"bot_token": token}
         self.dms = []
+        self.lasts = []
         return app
 
     def dm(self, token, msg):
@@ -634,14 +832,18 @@ class AppTest(unittest.TestCase):
     def at(self, day, h, m):
         return int(dt.datetime(2026, 11, day, h, m, tzinfo=fmt.KST).timestamp() * 1000)
 
+    def built(self, n, fetch=None, last=None):
+        self.lasts.append(last)
+        return {"content": "c", "embeds": [], "ring": True}
+
     def run_btc(self, app, n, build=None):
         with mock.patch.object(store, "save_state"), mock.patch("candleman.bot.dm_owner", self.dm), \
-                mock.patch.object(signalbot, "build", build or (lambda n: {"content": "c", "embeds": [], "ring": True})):
+                mock.patch.object(signalbot, "build", build or self.built):
             asyncio.run(app._maybe_signal(n))
 
-    def test_btc_once_per_close_and_after_a_short_wait(self):
+    def test_btc_once_per_4h_close_and_after_a_short_wait(self):
         app = self.app()
-        self.run_btc(app, self.at(2, 22, 0))                                     # 처음 켜면 지난 마감(11/1 23:00)이 바로 감
+        self.run_btc(app, self.at(2, 22, 0))                                     # 처음 켜면 지난 마감(11/2 19:00 분할)이 바로 감
         self.assertEqual(len(self.dms), 1)
         self.assertEqual(self.dms[0]["ring"], True)
         app._signal_next = 0
@@ -653,11 +855,24 @@ class AppTest(unittest.TestCase):
         app._signal_next = 0
         self.run_btc(app, self.at(2, 23, 30))
         self.assertEqual(len(self.dms), 2)                                       # 같은 마감은 한 번만
+        app._signal_next = 0
+        self.run_btc(app, self.at(3, 3, 1))                                      # 4시간 뒤 03시 분할
+        self.assertEqual(len(self.dms), 3)
+        self.assertEqual(self.lasts, [None, self.at(2, 19, 0), self.at(2, 23, 0)])   # 지난 글의 마감을 넘겨 그 사이 바뀐 분할을 같이 적게
+        self.assertEqual(app.state["signal_btc_end"], self.at(3, 3, 0))
+
+    def test_phone_off_for_hours_sends_only_the_latest_close(self):
+        app = self.app()
+        app.state["signal_btc_end"] = self.at(2, 23, 0)
+        self.run_btc(app, self.at(3, 9, 40))                                     # 03 · 07시를 놓침 → 07시 판정 글 하나에 그 사이를 같이
+        self.assertEqual(len(self.dms), 1)
+        self.assertEqual(self.lasts, [self.at(2, 23, 0)])
+        self.assertEqual(app.state["signal_btc_end"], self.at(3, 7, 0))
 
     def test_btc_retries_after_failure(self):
         app = self.app()
 
-        def boom(n):
+        def boom(n, *a, **k):
             raise ValueError("이번 마감 봉이 아직 없음")
         with self.assertRaises(ValueError):
             self.run_btc(app, self.at(2, 23, 1), boom)
@@ -683,7 +898,7 @@ class AppTest(unittest.TestCase):
         def refuse(token, msg):
             raise RuntimeError("디스코드 POST channels 실패: HTTP 403")
         with mock.patch.object(store, "log"), mock.patch.object(store, "save_state"), mock.patch("candleman.bot.dm_owner", refuse), \
-                mock.patch.object(signalbot, "build", lambda n: {"content": "c", "embeds": [], "ring": True}):
+                mock.patch.object(signalbot, "build", self.built):
             asyncio.run(app._maybe_signal(n))
 
     def test_dm_failure_retries_and_tells_status_once(self):
@@ -828,8 +1043,7 @@ class CommandTest(unittest.TestCase):
         from candleman import __main__ as cli
         sent = []
         msg = {"content": "머리", "embeds": [{"title": "카드"}], "ring": True}
-        with mock.patch.object(signalbot, "daily", return_value=[]), mock.patch.object(signalbot, "read", return_value={}), \
-                mock.patch.object(signalbot, "compose", return_value=msg), mock.patch.object(ipobot, "build", return_value=(msg, {"pending": [1]})), \
+        with mock.patch.object(signalbot, "build", return_value=msg), mock.patch.object(ipobot, "build", return_value=(msg, {"pending": [1]})), \
                 mock.patch.object(store, "load_state", return_value={}), mock.patch.object(store, "save_state", side_effect=AssertionError("저장하면 안 됨")), \
                 mock.patch.object(Discord, "_post", lambda self, ch, text, embeds=None: sent.append((ch, text))), \
                 mock.patch("candleman.bot.dm_owner", lambda tok, m: sent.append(("dm", m["content"]))), mock.patch("builtins.print"):
