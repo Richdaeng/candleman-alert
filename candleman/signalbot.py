@@ -5,7 +5,8 @@
   4시간마다(한국 3 · 7 · 11 · 15 · 19 · 23시) 한 분할씩 · 규칙이 켜지면 현물 롱, 꺼지면 선물 숏 1배 · 6분할 주문 봇(split-bot)과 같은 시각 · 같은 식.
 - 안전 진입: 밤 11시(UTC 14시) 판정 하나. 규칙이 켜지고 종가가 100일선 위면 자금의 50%만 현물 롱, 아니면 현금.
 규칙 = 종가가 50일선 위이거나 RSI(5) 과매도 상태(10 아래에서 켜지고 70 위에서 꺼짐). 판정은 일봉 마감 한 번 · 다음 봉 시가에 실행 · 장중 손절 없음.
-글마다 분할별 다음 판정의 매수 · 매도 기준가(그 시각 종가가 얼마 위 · 아래면 자리가 바뀌는지)를 달러로 적습니다(11/4 댕이 "매수 기준과 매도 기준을 달러 기준으로").
+글에는 방금 판정한 분할 하나만 적습니다(11/5 댕이 "그 분할에는 그 분할 시각에 맞는 알림만"): 그 분할의 자리와
+다음 판정(내일 같은 시각)의 매수 · 매도 기준가(그 시각 종가가 얼마 위 · 아래면 자리가 바뀌는지)를 달러로(11/4 댕이 "매수 기준과 매도 기준을 달러 기준으로").
 시험 값은 카드에 고정해 두고(사후 값), 시작 뒤 기록은 시세로 그때그때 다시 계산합니다(폰이 꺼졌던 날이 있어도 틀어지지 않게).
 신호가 난 판정은 왜 났는가(경로)별 적중 확률을 같이 적습니다. 값은 백테스트 표를 고정해 둔 것입니다(폰에서 다시 재지 않음).
 자리가 바뀐 판정만 운영자를 태그해서 폰 알림이 갑니다(ring). 바뀌지 않은 판정의 글은 태그도 알림도 없이 보냅니다.
@@ -52,7 +53,7 @@ FOOTER = ("투자 권유 아님 · 주문 안 냄 · 시험 값은 규칙을 고
           "적중 = 이 신호로 잡은 자리가 다음 신호에서 비용 뒤 플러스로 닫힘(안전 정리는 판 값보다 싸게 다시 삼) · 승률은 아무 날 진입이 더 높음(과감 52% · 안전 57%), 돈은 이긴 건의 크기에서 나옴\n"
           "2017-11부터 재면 낙폭 안전 −36.5% · 과감 −80.3% · 과감은 밤 11시 판정으로 2018년에 21연패 −70.5%\n"
           "2026년은 판정 시각 24개의 가운데 값이 안전 +6.2% · 과감 +29.7% · 실제 봇(밤 11시 판정)은 +0.7% · −21.3%")
-FOOTER6 = "투자 권유 아님 · 주문 안 냄 · 기준가는 그 분할 판정 시각의 종가(지금 종가 ±30% 안에서 셈) · 장중 손절 없음 · 적중 확률은 시험 값(사후 값)"
+FOOTER6 = "투자 권유 아님 · 주문 안 냄 · 기준가는 이 분할 다음 판정 시각의 종가(지금 종가 ±30% 안에서 셈) · 장중 손절 없음 · 적중 확률은 시험 값(사후 값)"
 FOOTER6_DAY = ("시험 값은 규칙을 고른 구간의 사후 값이라 기대치가 아님 · 적중 = 이 신호로 잡은 자리가 다음 신호에서 비용 뒤 플러스로 닫힘(안전 정리는 매도가보다 싸게 다시 삼)\n"
                "승률은 아무 날 진입이 더 높음(과감 52% · 안전 57%), 돈은 이긴 건의 크기에서 나옴\n"
                "2017-11부터 재면 낙폭 안전 −36.5% · 과감 6분할 −78.2%(시작 시각 4가지의 가운데 값 · 이 봇 −81.0%)\n"
@@ -431,22 +432,21 @@ def criteria(rs, c, when, buy="🟢 매수", sell="🔴 매도"):
 
 
 def now_line(h, st):
-    """방금 판정한 분할: 신호(적중 확률) 또는 그대로 + 종가 · RSI · 50일선. 지난 건수는 밤 11시 판정의 수라 그 분할에만 붙임."""
+    """방금 판정한 분할: 신호(적중 확률) 또는 그대로(진입 · 진입가 · 손익은 자금 대비 · 수수료 · 펀딩 전) + 종가 · RSI · 50일선.
+    지난 건수는 밤 11시 판정의 수라 그 분할에만 붙임."""
     x = st["bold"]
     if x["fresh"] and x["w"] > 0:
         top = "🟢 **매수 신호** · 선물 숏 1배 정리 → 현물 롱 (다음 봉 시가 · 지금) · 이번 숏 구간 %s\n%s" % (pct1(x["closed"]), chance(x["why"], h == SAFE_H))
     elif x["fresh"]:
         top = "🔴 **매도 신호** · 현물 정리 → 선물 숏 1배 (다음 봉 시가 · 지금) · 이번 롱 구간 %s\n%s" % (pct1(x["closed"]), chance(x["why"], h == SAFE_H))
     else:
-        top = "📌 그대로 · %s · %s 진입 · %s" % (side_word(x["w"]), _when(x["from"]), pct1(x["gain"]))
+        top = "📌 그대로 · %s · %s 진입 %s · %s" % (side_word(x["w"]), _when(x["from"]), _usd(x["entry"]), pct1(x["gain"]))
     return top + "\n종가 **%s** · RSI(5) %.1f%s · 50일선 %s %s" % (_usd(st["close"]), st["rsi"], " · RSI 되돌림 켜짐" if st["hold"] else "", _usd(st["ma50"]), "위" if st["up50"] else "아래")
 
 
-def split_field(h, st):
-    """분할 하나: 지금 자리 · 진입 · 손익(자금 대비 · 수수료 · 펀딩 전) + 다음 판정의 매수 · 매도 기준가."""
-    x = st["bold"]
-    return {"name": "%s %s · %s" % ("🟢" if x["w"] > 0 else "🔴", label(h), side_word(x["w"])),
-            "value": "%s 진입 %s · %s\n%s" % (_when(x["from"]), _usd(x["entry"]), pct1(x["gain"]), criteria(x["bands"], st["close"], _when(st["next_end"]))), "inline": False}
+def next_line(st):
+    """방금 판정한 분할의 다음 판정(내일 같은 시각) 매수 · 매도 기준가."""
+    return criteria(st["bold"]["bands"], st["close"], _when(st["next_end"]))
 
 
 def moved_line(h, st):
@@ -473,13 +473,14 @@ def head6(sts, h, moved, safe_moved):
         words.append("🛡️ 안전 %s%s" % ("진입" if s["w"] else "정리", " " + odds(s["why"]) if s["why"] else ""))
     if words:
         return "🔔 BTC 6분할 신호 · " + " · ".join(words), True
-    longs = sum(sts[k]["bold"]["w"] > 0 for k in HOURS)
-    return "📡 BTC 6분할 · %s 판정 · 자리 그대로 · 롱 %d · 숏 %d" % (label(h), longs, len(HOURS) - longs), False
+    return "📡 BTC 6분할 · %s 판정 · 자리 그대로 · %s" % (label(h), side_word(x["w"])), False
 
 
 def compose6(sts, n=None, last=None):
-    """6분할 디스코드 글 {"content", "embeds", "ring"}: 머리 한 줄 + 봇의 선택(방금 판정 · 놓친 판정 · 분할 6개의 다음 판정 기준가 · 안전 진입).
-    밤 11시 판정 글에만 규칙 카드 둘과 안전 진입을 붙임. last = 마지막으로 보낸 글의 판정 마감 시각 — 그 뒤에 자리가 바뀐 다른 분할 · 안전 진입도 같이 알리고 울림(폰이 꺼졌던 사이).
+    """6분할 디스코드 글 {"content", "embeds", "ring"}: 방금 판정한 분할 하나만(11/5 댕이 "그 분할에는 그 분할 시각에 맞는 알림만").
+    머리 한 줄 + 봇의 선택(방금 판정 · 그 분할의 다음 판정 기준가). 다른 분할은 그 분할 시각의 글에 나옴.
+    밤 11시 판정 글에만 규칙 카드 둘과 안전 진입을 붙임(안전 진입도 밤 11시 판정이라). last = 마지막으로 보낸 글의 판정 마감 시각 —
+    그 뒤에 자리가 바뀐 다른 분할 · 안전 진입은 폰이 꺼졌던 사이 놓친 판정이라 같이 알리고 울림(자리가 그대로인 분할은 안 적음).
     n = 보내는 때(마감 뒤 한참 지나 보내면 글에 적음)."""
     h = max(HOURS, key=lambda k: sts[k]["end"])
     end, s = sts[h]["end"], sts[SAFE_H]["safe"]
@@ -487,19 +488,17 @@ def compose6(sts, n=None, last=None):
     safe_moved = (h == SAFE_H and s["fresh"]) or (last is not None and s["from"] > last)
     text, ring = head6(sts, h, moved, safe_moved)
     field = lambda name, value: {"name": name, "value": value, "inline": False}
-    fields = [field("⏱️ %s · 방금 판정" % label(h), now_line(h, sts[h]))]
+    fields = [field("⏱️ %s · 방금 판정" % label(h), now_line(h, sts[h])), field("🔮 다음 판정 기준가", next_line(sts[h]))]
     if moved:
         fields.append(field("🔔 놓친 판정 · %s 글 뒤" % _when(last), "\n".join(moved_line(m, sts[m]) for m in moved)))
-    fields += [split_field(k, sts[k]) for k in sorted(HOURS, key=lambda k: sts[k]["next_end"])]
     if h == SAFE_H or safe_moved:
         fields.append(safe_field(sts[SAFE_H]))
-    longs = sum(sts[k]["bold"]["w"] > 0 for k in HOURS)
-    desc = "자금을 6으로 나눠 4시간마다 한 분할씩 판정 · 지금 🟢 롱 %d · 🔴 숏 %d\n기준가 = 그 분할 다음 판정 시각의 일봉 종가" % (longs, len(HOURS) - longs)
+    desc = "자금을 6으로 나눠 4시간마다 한 분할씩 판정 · 이 글은 %s만" % label(h)
     if n is not None and n - end > WAIT + LATE:
         desc += "\n⏰ 마감 %s 뒤에 보냄" % _ago(n - end)
     now = ([sts[h]["bold"]] if sts[h]["bold"]["fresh"] else []) + [sts[m]["bold"] for m in moved] + ([s] if safe_moved else [])
     color = PANEL if not now else GREEN if any(x["w"] > 0 for x in now) else cards.RED
-    panel = {"title": "🤖 6분할 · %s 판정 → 다음 %s" % (_when(end), _when(end + 4 * HOUR)), "color": color, "description": desc, "fields": fields,
+    panel = {"title": "🤖 %s · %s 판정 → 다음 %s" % (label(h), _when(end), _when(sts[h]["next_end"])), "color": color, "description": desc, "fields": fields,
              "footer": {"text": FOOTER6 + ("\n" + FOOTER6_DAY if h == SAFE_H else "")}}
     embeds = [rule_card(SAFE, since_text(s["since"])), rule_card(BOLD6, since_text(record6(sts))), panel] if h == SAFE_H else [panel]
     return {"content": text, "embeds": embeds, "ring": ring}
