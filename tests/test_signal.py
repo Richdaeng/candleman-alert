@@ -1079,7 +1079,7 @@ class RingTest(unittest.TestCase):
         with mock.patch("candleman.discord.urllib.request.urlopen", fake_urlopen):
             self.d._post("signal", "🔔 BTC 신호", [{"title": "카드"}])
         self.assertEqual(sent[0]["allowed_mentions"], {"parse": []})
-        self.assertTrue(sent[0]["avatar_url"].endswith("/stable/assets/signalbot.png"))
+        self.assertTrue(sent[0]["avatar_url"].endswith("/stable/assets/signalbot_btc.png"))
         with mock.patch("candleman.discord.urllib.request.urlopen", fake_urlopen):
             self.d._post("trade", "머리", [{"title": "카드"}])
         self.assertNotIn("avatar_url", sent[1])                                  # 다른 채널은 웹후크 설정 그대로
