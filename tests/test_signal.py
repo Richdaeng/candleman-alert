@@ -285,17 +285,36 @@ def size_ok(case, msg):
     case.assertLess(total, 6000)
 
 
-def text_ok(case, msg):
-    """6분할 글(11/8 댕이 "이렇게만 하자. 다른 건 너무 길다"): 카드 없이 줄글만 · 디스코드 글 한도 2000자 · 뺀 것(머리 줄 · 제목 · 설명 · 꼬리말)이 없음."""
-    case.assertEqual(msg["embeds"], [])
-    case.assertLessEqual(len(msg["content"]), 2000)
+def card_ok(case, msg):
+    """6분할 글(11/12 댕이 "매매일지봇도 카드 형식으로 깔끔하게"): 머리 한 줄 + 카드 하나 · 내용은 11/8 그대로(11/8 댕이 "이렇게만 하자.
+    다른 건 너무 길다" — 카드 제목 · 꼬리말 · 규칙 카드 없음) · 머리 줄은 굵게 안 함(폰 알림엔 '**'가 그대로 보임) · 디스코드 한도."""
+    case.assertEqual(len(msg["embeds"]), 1)
+    case.assertNotIn("\n", msg["content"])
+    case.assertNotIn("**", msg["content"])
+    e = msg["embeds"][0]
+    case.assertLessEqual(set(e), {"color", "description", "fields"})
+    case.assertIn(e["color"], (signalbot.GREEN, signalbot.cards.RED))
+    size_ok(case, msg)
     for gone in ("📡", "🤖", "BTC 6분할", "자금을 6으로", "투자 권유", "주문 안 냄", "사후 값"):
-        case.assertNotIn(gone, msg["content"])
+        case.assertNotIn(gone, repr(msg))
 
 
-def heads(msg):
-    """줄글에서 굵은 제목 줄만 ('**⏱️ 07시 분할 · 방금 판정**' …)."""
-    return [x for x in msg["content"].splitlines() if x.startswith("**")]
+STATS = ["종가", "RSI(5)", "50일선"]          # 카드 안에 나란한 칸 셋
+
+
+def names(msg):
+    """카드의 칸 이름들."""
+    return [f["name"] for f in msg["embeds"][0]["fields"]]
+
+
+def box(msg, name):
+    """이름이 name 으로 시작하는 칸의 줄들."""
+    return next(f["value"] for f in msg["embeds"][0]["fields"] if f["name"].startswith(name)).splitlines()
+
+
+def desc(msg):
+    """카드 설명의 줄들(지금 자리 · 신호)."""
+    return msg["embeds"][0]["description"].splitlines()
 
 
 class SixTest(unittest.TestCase):
@@ -369,21 +388,41 @@ class SixTest(unittest.TestCase):
         self.assertEqual(signalbot.criteria(ends, 90, w), "🔴 매도 · 11/5 11:00 종가 **$95** 위 (되돌림 끝남 · 적중 36%) · 단 $110 위면 50일선 위라 그대로")
         self.assertEqual(signalbot.criteria([[50, 130, True, None]], 90, w), "📌 11/5 11:00 종가가 지금 ±30% 안이면 그대로")
 
+    def test_criteria_lines_for_the_card(self):
+        """카드 칸의 기준가(11/12): 값 · 차례는 criteria 한 줄과 같고 · 기준마다 한 줄 · '단 … 그대로'는 그 아래 줄."""
+        w = "11/5 11:00"
+        two = [[50, 60, True, "RSI 되돌림"], [60, 80, False, None], [80, 120, True, "50일선 돌파"]]
+        self.assertEqual(signalbot.criteria_lines(two, 75, w), "🟢 매수 · 11/5 11:00 종가\n· **$80** 위 (50일선 돌파 · 적중 21%)\n· **$60** 아래 (RSI 되돌림 · 적중 42%)")
+        mid = [[50, 60, True, None], [60, 80, False, "50일선 이탈"], [80, 120, True, None]]
+        self.assertEqual(signalbot.criteria_lines(mid, 90, w), "🔴 매도 · 11/5 11:00 종가\n· **$80** 아래 (50일선 이탈 · 적중 26%)\n(단 $60 아래면 RSI 되돌림으로 그대로)")
+        ends = [[50, 95, True, None], [95, 110, False, "되돌림 끝남"], [110, 130, True, None]]
+        self.assertEqual(signalbot.criteria_lines(ends, 90, w), "🔴 매도 · 11/5 11:00 종가\n· **$95** 위 (되돌림 끝남 · 적중 36%)\n(단 $110 위면 50일선 위라 그대로)")
+        self.assertEqual(signalbot.criteria_lines([[50, 130, True, None]], 90, w), "📌 11/5 11:00 종가가 지금 ±30% 안이면 그대로")
+
     def test_quiet_split_post(self):
-        """11/8 댕이 "디스코드 판정 봇, 이렇게만 하자. 다른 건 너무 길다": 카드 없이 줄글 다섯 줄 — 방금 판정(자리 · 종가 · RSI · 50일선) · 다음 판정 기준가."""
+        """11/12 댕이 "매매일지봇도 카드 형식으로 깔끔하게": 머리 한 줄 + 카드 — 지금 자리 · 종가 · RSI · 50일선 칸 · 다음 판정 기준가 칸.
+        내용은 11/8 그대로(댕이 "디스코드 판정 봇, 이렇게만 하자. 다른 건 너무 길다")."""
         n = self.at(5, 7, 1)
         msg = signalbot.compose6(self.sts(n, lambda h: [100.0 + i for i in range(420)]), n, self.at(5, 3, 0))
         self.assertFalse(msg["ring"])
-        lines = msg["content"].splitlines()
-        self.assertEqual(len(lines), 5)
-        self.assertEqual(lines[0], "**⏱️ 07시 분할 · 방금 판정**")              # 11/5 댕이: 그 분할 시각엔 그 분할만
-        self.assertRegex(lines[1], r"^📌 그대로 · 현물 롱 · \d+/\d+ 07:00 진입 \$[\d,]+ · [+−]?\d+\.\d%$")
-        self.assertRegex(lines[2], r"^종가 \*\*\$[\d,]+\*\* · RSI\(5\) \d+\.\d( · RSI 되돌림 켜짐)? · 50일선 \$[\d,]+ (위|아래)$")
-        self.assertEqual(lines[3], "**🔮 다음 판정 기준가**")
-        self.assertTrue(lines[4].startswith("🔴 매도 · 11/6 07:00 종가 **$"))      # 방금 판정한 분할은 내일 같은 시각
-        self.assertIn("· 단 $", lines[4])                                          # 크게 떨어지면 RSI 되돌림으로 그대로
-        self.assertNotIn("⏰", msg["content"])
-        text_ok(self, msg)
+        self.assertEqual(msg["content"], "⏱️ 07시 분할 · 방금 판정")               # 11/5 댕이: 그 분할 시각엔 그 분할만
+        d = desc(msg)
+        self.assertEqual(len(d), 2)
+        self.assertEqual(d[0], "📌 그대로 · **현물 롱**")
+        self.assertRegex(d[1], r"^\d+/\d+ 07:00 진입 \*\*\$[\d,]+\*\* · \*\*[+−]?\d+\.\d%\*\*$")
+        e = msg["embeds"][0]
+        self.assertEqual(names(msg), STATS + ["🔮 다음 판정 기준가"])
+        self.assertEqual([f["inline"] for f in e["fields"]], [True, True, True, False])   # 종가 · RSI · 50일선은 나란히
+        self.assertRegex(e["fields"][0]["value"], r"^\*\*\$[\d,]+\*\*$")
+        self.assertRegex(e["fields"][1]["value"], r"^\d+\.\d( · 되돌림 켜짐)?$")
+        self.assertRegex(e["fields"][2]["value"], r"^\$[\d,]+ (위|아래)$")
+        b = box(msg, "🔮")
+        self.assertEqual(b[0], "🔴 매도 · 11/6 07:00 종가")                         # 방금 판정한 분할은 내일 같은 시각
+        self.assertTrue(b[1].startswith("· **$"))
+        self.assertTrue(any(x.startswith("(단 $") for x in b))                      # 크게 떨어지면 RSI 되돌림으로 그대로
+        self.assertEqual(e["color"], signalbot.GREEN)                                # 롱이라 초록 띠
+        self.assertNotIn("⏰", repr(msg))
+        card_ok(self, msg)
 
     def test_each_post_tells_only_its_own_split(self):
         """11/5 댕이 "6분할이 한번에 6번씩 오니까 너무 정신없어 · 그 분할에는 그 분할 시각에 맞는 알림만": 판정 시각마다 그 분할만 적힘."""
@@ -392,80 +431,79 @@ class SixTest(unittest.TestCase):
             n = self.at(5, kst, 1)
             msg = signalbot.compose6(self.sts(n, up), n, n - 60_000 - 4 * HOUR)   # 4시간 전 글은 보냄 → 놓친 판정 없음
             mine = "%02d시 분할" % kst
-            self.assertIn(mine, msg["content"])
+            self.assertEqual(msg["content"], "⏱️ %s · 방금 판정" % mine)
             for other in (signalbot.label(k) for k in signalbot.HOURS):
                 if other != mine:
                     self.assertNotIn(other, repr(msg), (kst, other))
-            names = heads(msg)
-            self.assertEqual(names[:2], ["**⏱️ %s · 방금 판정**" % mine, "**🔮 다음 판정 기준가**"])
-            self.assertEqual(names[2:], ["**🌙 하루 정리**"] if kst == 23 else [])   # 하루 정리는 하루의 마지막 분할(23시) 글에만
-            self.assertEqual(len(msg["content"].splitlines()), 7 if kst == 23 else 5)
+            self.assertEqual(names(msg), STATS + ["🔮 다음 판정 기준가"] + (["🌙 하루 정리"] if kst == 23 else []))   # 하루 정리는 하루의 마지막 분할(23시) 글에만
             self.assertNotIn("안전", repr(msg))                                  # 11/7 댕이 "안전 진입은 빼버리고"
             if kst != 23:
                 self.assertNotIn("과감한 수익", repr(msg))
-            text_ok(self, msg)                                                   # 11/6 댕이: 규칙 카드는 안 붙임 · 11/8: 카드 없이 줄글만
+            card_ok(self, msg)                                                   # 11/6 댕이: 규칙 카드는 안 붙임 · 11/12: 카드는 하나
 
     def test_turn_at_the_judged_split_rings(self):
         n = self.at(5, 7, 1)
         msg = signalbot.compose6(self.sts(n, lambda h: WAVE + ([96.0] if h == 22 else [101.0])), n, self.at(5, 3, 0))
         self.assertTrue(msg["ring"])
-        lines = msg["content"].splitlines()
-        self.assertEqual(lines[0], "**⏱️ 07시 분할 · 방금 판정**")
-        self.assertEqual(with_tag(msg["content"], 99).splitlines()[0], "**⏱️ 07시 분할 · 방금 판정** <@99>")   # 태그는 보낼 때 첫 줄 끝에(dm_owner)
-        self.assertTrue(lines[1].startswith("🔴 **매도 신호** · 현물 정리 → 선물 숏 1배"))
-        self.assertTrue(lines[2].startswith("🎯 적중 확률 **26%** · 50일선 이탈"))
-        self.assertNotIn("지난", msg["content"])                                  # 지난 건수는 밤 11시 판정의 수
-        self.assertTrue(lines[3].startswith("종가 **$"))
-        self.assertEqual(heads(msg), ["**⏱️ 07시 분할 · 방금 판정**", "**🔮 다음 판정 기준가**"])
-        self.assertTrue(lines[-1].startswith("🟢 매수 · 11/6 07:00 종가"))       # 숏이 된 분할의 다음 기준은 매수
+        self.assertEqual(msg["content"], "⏱️ 07시 분할 · 방금 판정 · 🔴 매도 신호")                # 폰 알림(머리 줄)에 신호가 바로 보임
+        self.assertEqual(with_tag(msg["content"], 99), "⏱️ 07시 분할 · 방금 판정 · 🔴 매도 신호 <@99>")   # 태그는 보낼 때 머리 줄 끝에(dm_owner)
+        d = desc(msg)
+        self.assertEqual(d[0], "🔴 **매도 신호** · 현물 정리 → 선물 숏 1배 (다음 봉 시가 · 지금)")
+        self.assertRegex(d[1], r"^이번 롱 구간 \*\*[+−]?\d+\.\d%\*\*$")
+        self.assertTrue(d[2].startswith("🎯 적중 확률 **26%** · 50일선 이탈"))
+        self.assertNotIn("지난", repr(msg))                                       # 지난 건수는 밤 11시 판정의 수
+        self.assertEqual(names(msg), STATS + ["🔮 다음 판정 기준가"])
+        self.assertEqual(box(msg, "🔮")[0], "🟢 매수 · 11/6 07:00 종가")           # 숏이 된 분할의 다음 기준은 매수
+        self.assertEqual(msg["embeds"][0]["color"], signalbot.cards.RED)           # 숏이 됐으니 빨간 띠
         self.assertNotIn("롱 5", repr(msg))                                       # 다른 분할 자리는 안 셈
-        text_ok(self, msg)
+        card_ok(self, msg)
 
     def test_missed_turns_are_told_and_ring(self):
         n = self.at(5, 7, 1)
         sts = self.sts(n, lambda h: WAVE + ([96.0] if h == 18 else [101.0]))       # 03시 분할이 바뀐 사이 폰이 꺼져 있었음
         msg = signalbot.compose6(sts, n, self.at(4, 23, 0))
         self.assertTrue(msg["ring"])
-        lines = msg["content"].splitlines()
-        self.assertEqual(heads(msg), ["**⏱️ 07시 분할 · 방금 판정**", "**🔮 다음 판정 기준가**", "**🔔 놓친 판정 · 11/4 23:00 글 뒤**"])   # 이 분할(방금 판정 · 다음 기준가) 뒤에
-        self.assertTrue(lines[1].startswith("📌 그대로 · 현물 롱"))
-        at = lines.index("**🔔 놓친 판정 · 11/4 23:00 글 뒤**")
-        self.assertEqual(len(lines) - at - 1, 1)                                 # 자리가 그대로인 놓친 분할은 안 적음
-        self.assertTrue(lines[at + 1].startswith("🔴 03시 분할 · 11/5 03:00 판정에 매도 → 선물 숏 1배 (50일선 이탈 · 적중 26%)"))
-        text_ok(self, msg)
+        self.assertEqual(msg["content"], "⏱️ 07시 분할 · 방금 판정 · 🔔 놓친 판정 1건")
+        self.assertEqual(names(msg), STATS + ["🔮 다음 판정 기준가", "🔔 놓친 판정 · 11/4 23:00 글 뒤"])   # 이 분할(방금 판정 · 다음 기준가) 뒤에
+        self.assertEqual(desc(msg)[0], "📌 그대로 · **현물 롱**")
+        miss = box(msg, "🔔")
+        self.assertEqual(len(miss), 1)                                             # 자리가 그대로인 놓친 분할은 안 적음
+        self.assertTrue(miss[0].startswith("🔴 03시 분할 · 11/5 03:00 판정에 매도 → 선물 숏 1배 (50일선 이탈 · 적중 26%)"))
+        card_ok(self, msg)
         quiet = signalbot.compose6(sts, n, self.at(5, 3, 0))                     # 03시 글을 이미 보냈으면 다시 안 울림
         self.assertFalse(quiet["ring"])
-        self.assertNotIn("놓친", quiet["content"])
+        self.assertNotIn("놓친", repr(quiet))
         self.assertNotIn("03시 분할", repr(quiet))                               # 03시 분할은 03시 글에서 이미 알림
         self.assertFalse(signalbot.compose6(sts, n)["ring"])                     # 처음 보내는 글(last 없음)도 지난 일은 안 울림
 
     def test_11pm_post_has_a_one_line_day_summary(self):
-        """11/7 댕이 "안전 진입은 빼버리고 과감한 수익 6분할에 50일선( x$), 현재 RSI까지만": 다섯 줄 뒤에 하루 정리 한 줄."""
+        """11/7 댕이 "안전 진입은 빼버리고 과감한 수익 6분할에 50일선( x$), 현재 RSI까지만": 23시 글에만 하루 정리 칸
+        (50일선 · RSI(5)는 같은 23시 분할 일봉 값이라 바로 위 칸에 · 11/12 카드)."""
         n = self.at(4, 23, 1)
         sts = self.sts(n, lambda h: [100.0 + i for i in range(420)])
         msg = signalbot.compose6(sts, n, self.at(4, 19, 0))
-        self.assertEqual(heads(msg), ["**⏱️ 23시 분할 · 방금 판정**", "**🔮 다음 판정 기준가**", "**🌙 하루 정리**"])
-        lines = msg["content"].splitlines()
-        self.assertEqual((len(lines), lines[-2]), (7, "**🌙 하루 정리**"))
-        day = lines[-1]
-        self.assertEqual(day, "🚀 과감한 수익 · 6분할 롱 6 · 숏 0 · 50일선 %s · RSI(5) %.1f" % (signalbot._usd(sts[14]["ma50"]), sts[14]["rsi"]))   # 23시 분할 일봉 값
-        self.assertRegex(day, r"^🚀 과감한 수익 · 6분할 롱 6 · 숏 0 · 50일선 \$[\d,]+ · RSI\(5\) \d+\.\d$")
+        self.assertEqual(msg["content"], "⏱️ 23시 분할 · 방금 판정")
+        self.assertEqual(names(msg), STATS + ["🔮 다음 판정 기준가", "🌙 하루 정리"])
+        self.assertEqual(box(msg, "🌙"), ["🚀 과감한 수익 · 6분할 롱 6 · 숏 0"])
+        f = msg["embeds"][0]["fields"]
+        self.assertEqual(f[2]["value"], "%s %s" % (signalbot._usd(sts[14]["ma50"]), "위" if sts[14]["up50"] else "아래"))   # 23시 분할 일봉의 50일선
+        self.assertTrue(f[1]["value"].startswith("%.1f" % sts[14]["rsi"]))                                                  # 23시 분할 일봉의 RSI(5)
         for gone in ("안전", "10/31부터", "+23,593%", "+989%", "2017-11부터", "수익 우선", "낙폭 우선"):   # 안전 진입 · 기록 · 규칙 카드 · 긴 꼬리말은 없음
             self.assertNotIn(gone, repr(msg))
-        text_ok(self, msg)                                                       # 꼬리말 없음(11/8)
+        card_ok(self, msg)                                                       # 카드 제목 · 꼬리말 없음(11/8)
 
     def test_11pm_turn_keeps_the_count(self):
         n = self.at(4, 23, 1)
         msg = signalbot.compose6(self.sts(n, lambda h: WAVE + ([96.0] if h == 14 else [101.0])), n, self.at(4, 19, 0))
         self.assertTrue(msg["ring"])
-        lines = msg["content"].splitlines()
-        self.assertTrue(lines[1].startswith("🔴 **매도 신호** · 현물 정리 → 선물 숏 1배"))
-        self.assertTrue(lines[2].endswith("· 지난 94건"))                         # 지난 건수는 밤 11시 판정의 수라 이 분할에만
-        self.assertEqual(lines[-2], "**🌙 하루 정리**")
-        self.assertTrue(lines[-1].startswith("🚀 과감한 수익 · 6분할 롱 5 · 숏 1 · 50일선 $"))
+        self.assertEqual(msg["content"], "⏱️ 23시 분할 · 방금 판정 · 🔴 매도 신호")
+        d = desc(msg)
+        self.assertTrue(d[0].startswith("🔴 **매도 신호** · 현물 정리 → 선물 숏 1배"))
+        self.assertTrue(d[-1].endswith("· 지난 94건"))                           # 지난 건수는 밤 11시 판정의 수라 이 분할에만
+        self.assertEqual(box(msg, "🌙"), ["🚀 과감한 수익 · 6분할 롱 5 · 숏 1"])
         self.assertNotIn("놓친", repr(msg))
         self.assertNotIn("안전", repr(msg))                                       # 같은 판정의 안전 정리는 안 적음
-        text_ok(self, msg)
+        card_ok(self, msg)
 
     def test_safe_entry_is_never_told_in_split_posts(self):
         """11/7 댕이 "안전 진입은 빼버리고": 밤 11시 글을 놓친 사이 안전 진입이 바뀌어도 6분할 글엔 안 적고, 그것만으로는 울리지도 않음."""
@@ -474,11 +512,13 @@ class SixTest(unittest.TestCase):
         self.assertGreater(sts[14]["safe"]["from"], last)                           # 시험 자료에 정말 안전 진입 변화가 있음
         msg = signalbot.compose6(sts, n, last)
         self.assertTrue(msg["ring"])                                                 # 23시 분할 매도를 놓쳤으니 울림
-        lines = msg["content"].splitlines()
-        self.assertEqual(lines[-2], "**🔔 놓친 판정 · 11/4 19:00 글 뒤**")           # 23시 분할 줄 하나 · 안전 진입 줄은 없음
-        self.assertTrue(lines[-1].startswith("🔴 23시 분할 · 11/4 23:00 판정에 매도 → 선물 숏 1배"))
+        self.assertIn("🔔 놓친 판정 1건", msg["content"])
+        self.assertEqual(names(msg)[-1], "🔔 놓친 판정 · 11/4 19:00 글 뒤")         # 23시 분할 줄 하나 · 안전 진입 줄은 없음
+        miss = box(msg, "🔔")
+        self.assertEqual(len(miss), 1)
+        self.assertTrue(miss[0].startswith("🔴 23시 분할 · 11/4 23:00 판정에 매도 → 선물 숏 1배"))
         self.assertNotIn("안전", repr(msg))
-        text_ok(self, msg)
+        card_ok(self, msg)
         sts[14]["bold"]["from"] = last - DAY                                         # 과감 23시 분할은 그대로였고 안전 진입만 바뀐 날이라 치면
         quiet = signalbot.compose6(sts, n, last)
         self.assertFalse(quiet["ring"])
@@ -487,11 +527,11 @@ class SixTest(unittest.TestCase):
 
     def test_late_post_says_so(self):
         sts = self.sts(self.at(5, 7, 1), lambda h: [100.0 + i for i in range(420)])
-        first = lambda n: signalbot.compose6(sts, n)["content"].splitlines()[0]      # noqa: E731 · 늦게 보낸 것은 첫 줄 끝에
-        self.assertEqual(first(self.at(5, 7, 15)), "**⏱️ 07시 분할 · 방금 판정** · ⏰ 마감 15분 뒤에 보냄")
-        self.assertEqual(first(self.at(5, 9, 5)), "**⏱️ 07시 분할 · 방금 판정** · ⏰ 마감 2시간 5분 뒤에 보냄")
-        self.assertEqual(first(self.at(5, 7, 5)), "**⏱️ 07시 분할 · 방금 판정**")
-        self.assertNotIn("⏰", signalbot.compose6(sts, self.at(5, 7, 5))["content"])
+        head = lambda n: signalbot.compose6(sts, n)["content"]                       # noqa: E731 · 늦게 보낸 것은 머리 줄 끝에
+        self.assertEqual(head(self.at(5, 7, 15)), "⏱️ 07시 분할 · 방금 판정 · ⏰ 마감 15분 뒤에 보냄")
+        self.assertEqual(head(self.at(5, 9, 5)), "⏱️ 07시 분할 · 방금 판정 · ⏰ 마감 2시간 5분 뒤에 보냄")
+        self.assertEqual(head(self.at(5, 7, 5)), "⏱️ 07시 분할 · 방금 판정")
+        self.assertNotIn("⏰", repr(signalbot.compose6(sts, self.at(5, 7, 5))))
 
     def test_build_waits_for_every_split(self):
         n = self.at(5, 7, 1)
